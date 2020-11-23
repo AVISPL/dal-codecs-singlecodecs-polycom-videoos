@@ -27,6 +27,7 @@ import org.springframework.http.client.ClientHttpResponse;
 import org.springframework.util.CollectionUtils;
 import org.springframework.web.client.RestTemplate;
 
+import javax.naming.CommunicationException;
 import javax.security.auth.login.FailedLoginException;
 import java.io.IOException;
 import java.util.*;
@@ -74,7 +75,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
     @Override
     public String dial(DialDevice dialDevice) throws Exception {
-        logger.debug("Dial using dial string: " + dialDevice.getDialString());
+        if(logger.isDebugEnabled()) {
+            logger.debug("Dial using dial string: " + dialDevice.getDialString());
+        }
         ObjectNode request = JsonNodeFactory.instance.objectNode();
 
         Integer callSpeed = dialDevice.getCallSpeed();
@@ -99,11 +102,13 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      */
     @Override
     public void hangup(String s) throws Exception {
-        logger.debug("Hangup string received: " + s);
+        if(logger.isDebugEnabled()) {
+            logger.debug("Hangup string received: " + s);
+        }
         controlOperationsLock.lock();
         try {
             getAllConferenceCalls().forEach(jsonNode -> {
-                int id = jsonNode.get("id").asInt();
+                int id = getJsonProperty(jsonNode, "id").asInt();
                 try {
                     doDelete(String.format(CONFERENCES, id));
                     callRate = 1920;
@@ -121,7 +126,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      */
     @Override
     public CallStatus retrieveCallStatus(String s) throws Exception {
-        logger.debug("Retrieving call status with string: " + s);
+        if(logger.isDebugEnabled()) {
+            logger.debug("Retrieving call status with string: " + s);
+        }
         controlOperationsLock.lock();
         try {
             CallStatus callStatus = new CallStatus();
@@ -167,7 +174,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      */
     private boolean isVideoMuted() throws Exception {
         JsonNode response = doGet(buildHttpUrl(VIDEO_MUTE), JsonNode.class);
-        return response.get("result").asBoolean();
+        return getJsonProperty(response, "result").asBoolean();
     }
 
     /**
@@ -180,7 +187,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         ObjectNode request = JsonNodeFactory.instance.objectNode();
         request.put("mute", status);
         JsonNode response = doPost(VIDEO_MUTE, request, JsonNode.class);
-        return response.get("success").asBoolean();
+        return getJsonProperty(response, "success").asBoolean();
     }
 
     @Override
@@ -188,7 +195,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         controlOperationsLock.lock();
         try {
             if (!doPost(AUDIO_MUTED, true).getStatusCode().is2xxSuccessful()) {
-                logger.error("Unable to mute the device");
+                throw new CommunicationException("Unable to mute the device.");
             }
         } finally {
             controlOperationsLock.unlock();
@@ -200,7 +207,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         controlOperationsLock.lock();
         try {
             if (!doPost(AUDIO_MUTED, false).getStatusCode().is2xxSuccessful()) {
-                logger.error("Unable to unmute the device");
+                throw new CommunicationException("Unable to unmute the device.");
             }
         } finally {
             controlOperationsLock.unlock();
@@ -314,7 +321,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                             videoChannelStats.setFrameSizeRx(getJsonProperty(jsonNode, "mediaFormat").asText());
                             break;
                         default:
-                            logger.debug("Not implemented: " + getJsonProperty(jsonNode, "mediaType").asText());
+                            if(logger.isDebugEnabled()) {
+                                logger.debug("Not implemented: " + getJsonProperty(jsonNode, "mediaType").asText());
+                            }
                             break;
                     }
                     break;
@@ -337,11 +346,16 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                             videoChannelStats.setFrameSizeTx(getJsonProperty(jsonNode, "mediaFormat").asText());
                             break;
                         default:
-                            logger.debug("Not implemented: " + getJsonProperty(jsonNode, "mediaType").asText());
+                            if(logger.isDebugEnabled()) {
+                                logger.debug("Not implemented for media type: " + getJsonProperty(jsonNode, "mediaType").asText());
+                            }
                             break;
                     }
                     break;
                 default:
+                    if(logger.isDebugEnabled()) {
+                        logger.debug("Not implemented for media direction: " + getJsonProperty(jsonNode, "mediaDirection").asText());
+                    }
                     break;
             }
         });
@@ -521,7 +535,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             return doGet(buildHttpUrl(String.format(MEDIASTATS, conferenceId)), ArrayNode.class);
         } catch (CommandFailureException cfe) {
             if (cfe.getStatusCode() == 404) {
-                logger.debug("Conference " + conferenceId + " is not available anymore. Skipping media stats retrieval.");
+                if(logger.isDebugEnabled()) {
+                    logger.debug("Conference " + conferenceId + " is not available anymore. Skipping media stats retrieval.");
+                }
                 return JsonNodeFactory.instance.arrayNode();
             } else {
                 logger.error("Unable to find conference by id " + conferenceId);
