@@ -64,6 +64,10 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private String sessionId;
     private int callRate = 1920;
 
+    /**
+     * Instantiate and object with trustAllCertificates set to 'true' for being able to
+     * communicate with the devices with invalid certificates
+     */
     public PolycomVideoOS() {
         setTrustAllCertificates(true);
     }
@@ -164,30 +168,6 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
     @Override
     public void sendMessage(PopupMessage popupMessage) throws Exception {
-
-    }
-
-    /**
-     * Check if outcoming video feed is muted
-     *
-     * @return boolean outcoming video feed mute status
-     */
-    private boolean isVideoMuted() throws Exception {
-        JsonNode response = doGet(buildHttpUrl(VIDEO_MUTE), JsonNode.class);
-        return getJsonProperty(response, "result").asBoolean();
-    }
-
-    /**
-     * Set local video feed mute status
-     *
-     * @param status boolean indicating the target outcoming video feed state
-     * @return boolean value, indicating the success of the mute status change.
-     */
-    private boolean setMuteVideoStatus(boolean status) throws Exception {
-        ObjectNode request = JsonNodeFactory.instance.objectNode();
-        request.put("mute", status);
-        JsonNode response = doPost(VIDEO_MUTE, request, JsonNode.class);
-        return getJsonProperty(response, "success").asBoolean();
     }
 
     @Override
@@ -290,6 +270,28 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         return Arrays.asList(extendedStatistics, endpointStatistics);
     }
 
+    /**
+     * Check if outcoming video feed is muted
+     *
+     * @return boolean outcoming video feed mute status
+     */
+    private boolean isVideoMuted() throws Exception {
+        JsonNode response = doGet(buildHttpUrl(VIDEO_MUTE), JsonNode.class);
+        return getJsonProperty(response, "result").asBoolean();
+    }
+
+    /**
+     * Set local video feed mute status
+     *
+     * @param status boolean indicating the target outcoming video feed state
+     * @return boolean value, indicating the success of the mute status change.
+     */
+    private boolean setMuteVideoStatus(boolean status) throws Exception {
+        ObjectNode request = JsonNodeFactory.instance.objectNode();
+        request.put("mute", status);
+        JsonNode response = doPost(VIDEO_MUTE, request, JsonNode.class);
+        return getJsonProperty(response, "success").asBoolean();
+    }
 
     /**
      * Get media statistics related to the current conference call
@@ -394,7 +396,6 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
         return Integer.sum(a, b);
     }
-
 
     /**
      * Retrieve Integer sum of 2 values of packet data.
