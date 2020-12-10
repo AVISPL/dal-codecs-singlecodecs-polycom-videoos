@@ -28,7 +28,6 @@ import org.springframework.http.client.ClientHttpResponse;
 import org.springframework.util.CollectionUtils;
 import org.springframework.web.client.RestTemplate;
 
-import javax.naming.CommunicationException;
 import javax.security.auth.login.FailedLoginException;
 import java.io.IOException;
 import java.util.*;
