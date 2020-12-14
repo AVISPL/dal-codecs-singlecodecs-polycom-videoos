@@ -50,6 +50,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private static String CONFERENCE = "rest/conferences"; // POST for calling a single participant, GET to list all
     private static String CONFERENCES = "rest/conferences/%s"; // DELETE to disconnect
     private static String MEDIASTATS = "rest/conferences/%s/mediastats";
+    private static String SHARED_MEDIASTATS = "/rest/mediastats";
     private static String AUDIO = "rest/audio";
     private static String AUDIO_MUTED = "rest/audio/muted";
     private static String VIDEO_MUTE = "rest/video/local/mute";
@@ -69,11 +70,12 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private EndpointStatistics localEndpointStatistics;
 
     private String sessionId;
-    private final int CALL_RATE = 1920;
+    private static final int CALL_RATE = 1920;
+    private static final int MAX_STATUS_POLL_ATTEMPT = 5;
 
     /* Grace period for device reboot action. It takes about 3 minutes for the device to get fully
      * functional after reboot is triggered */
-    private final int REBOOT_GRACE_PERIOD_MS = 200000;
+    private static final int REBOOT_GRACE_PERIOD_MS = 200000;
 
     /**
      * Instantiate and object with trustAllCertificates set to 'true' for being able to
@@ -91,7 +93,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     @Override
     public String dial(DialDevice dialDevice) throws Exception {
         if (logger.isDebugEnabled()) {
-            logger.debug("Dial using dial string: " + dialDevice.getDialString());
+            logger.debug("Dialing using dial string: " + dialDevice.getDialString());
         }
         ObjectNode request = JsonNodeFactory.instance.objectNode();
         Integer callSpeed = dialDevice.getCallSpeed();
@@ -107,11 +109,21 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         if (response == null) {
             return null;
         }
-        JsonNode meetingInfo = doGet(buildHttpUrl(getJsonProperty(response.get(0), "href", String.class)), JsonNode.class);
-        if (meetingInfo == null) {
-            return null;
+
+        for (int i = 0; i < MAX_STATUS_POLL_ATTEMPT; i++) {
+            JsonNode meetingInfo = doGet(buildHttpUrl(getJsonProperty(response.get(0), "href", String.class)), JsonNode.class);
+            if (meetingInfo != null) {
+                String conferenceId = getJsonProperty(meetingInfo, "parentConfId", String.class);
+                if (null != conferenceId) {
+                    String remoteAddress = getJsonProperty(meetingInfo, "address", String.class);
+                    if (!StringUtils.isNullOrEmpty(remoteAddress) && remoteAddress.trim().equals(dialDevice.getDialString().trim())) {
+                        return conferenceId;
+                    }
+                }
+            }
+            Thread.sleep(1000);
         }
-        return getJsonProperty(meetingInfo, "parentConfId", String.class);
+        return null;
     }
 
     /**
@@ -154,13 +166,22 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         callStatus.setCallStatusState(CallStatus.CallStatusState.Disconnected);
         callStatus.setCallId(conferenceId);
         try {
-            JsonNode response = doGet(buildHttpUrl(String.format(CONFERENCES, conferenceId)), JsonNode.class);
-            if (response == null) {
-                return callStatus;
-            } else if ("CONNECTED".equals(getJsonProperty(response, "state", String.class))) {
-                callStatus.setCallId(getJsonProperty(response, "id", String.class));
-                callStatus.setCallStatusState(CallStatus.CallStatusState.Connected);
-                return callStatus;
+            if(!StringUtils.isNullOrEmpty(conferenceId)){
+                JsonNode response = doGet(buildHttpUrl(String.format(CONFERENCES, conferenceId)), JsonNode.class);
+                if (response == null) {
+                    return callStatus;
+                } else if ("CONNECTED".equals(getJsonProperty(response, "state", String.class))) {
+                    callStatus.setCallId(getJsonProperty(response, "id", String.class));
+                    callStatus.setCallStatusState(CallStatus.CallStatusState.Connected);
+                    return callStatus;
+                }
+            } else {
+                ArrayNode conferences = listConferenceCalls();
+                if(conferences != null && conferences.size() > 0){
+                    callStatus.setCallId(getJsonProperty(conferences.get(0), "id", String.class));
+                    callStatus.setCallStatusState(CallStatus.CallStatusState.Connected);
+                    return callStatus;
+                }
             }
         } finally {
             controlOperationsLock.unlock();
@@ -266,13 +287,16 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
                 AudioChannelStats audioChannelStats = new AudioChannelStats();
                 VideoChannelStats videoChannelStats = new VideoChannelStats();
+                ContentChannelStats contentChannelStats = new ContentChannelStats();
 
                 ArrayNode conferenceCallMediaStats = retrieveConferenceCallMediaStats(conferenceId);
                 retrieveConferenceCallMediaStats(conferenceCallMediaStats, audioChannelStats, videoChannelStats, callStats);
+                retrieveSharedMediaStats(contentChannelStats);
 
                 endpointStatistics.setCallStats(callStats);
                 endpointStatistics.setAudioChannelStats(audioChannelStats);
                 endpointStatistics.setVideoChannelStats(videoChannelStats);
+                endpointStatistics.setContentChannelStats(contentChannelStats);
             }
 
             localStatistics = extendedStatistics;
@@ -569,6 +593,32 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             } else {
                 logger.error("Unable to find conference by id " + conferenceId, cfe);
                 throw cfe;
+            }
+        }
+    }
+
+    /**
+     * Retrieve information about shared media content.
+     * It is considered that 1 source is shared at any given time, that's why it's get(0)
+     * Possible content sources are:
+     * •  Content App support
+     * •  Apple Airplay
+     * •  Miracast
+     * •  HDMI input
+     * •  Whiteboarding
+     * @param contentChannelStats to save shared media stats to
+     * @throws Exception during http communication (shared content stats retrieval)
+     */
+    private void retrieveSharedMediaStats(ContentChannelStats contentChannelStats) throws Exception {
+        JsonNode response = doGet(buildHttpUrl(SHARED_MEDIASTATS), JsonNode.class);
+        if(response != null) {
+            ArrayNode vars = (ArrayNode) response.get("vars");
+            if(vars != null && vars.size() > 0){
+                JsonNode sharedStats = vars.get(0);
+                contentChannelStats.setFrameSizeTxWidth(getJsonProperty(sharedStats, "width", Integer.class));
+                contentChannelStats.setFrameSizeTxHeight(getJsonProperty(sharedStats, "height", Integer.class));
+                contentChannelStats.setFrameRateTx(getJsonProperty(sharedStats, "framerate", Float.class));
+                contentChannelStats.setBitRateTx(getJsonProperty(sharedStats, "bitrate", Integer.class));
             }
         }
     }
