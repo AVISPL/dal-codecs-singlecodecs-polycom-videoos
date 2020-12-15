@@ -814,7 +814,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      */
     @SuppressWarnings("unchecked")
     private <T> T getJsonProperty(JsonNode json, String property, Class<T> type) {
-        JsonNode value = json.findValue(property);
+        JsonNode value = json.get(property);
         if (value == null) {
             if (logger.isDebugEnabled()) {
                 logger.debug(property + " property is not available.");
