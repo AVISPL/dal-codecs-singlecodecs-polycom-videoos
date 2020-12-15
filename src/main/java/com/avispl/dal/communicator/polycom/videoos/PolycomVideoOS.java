@@ -170,7 +170,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 JsonNode response = doGet(buildHttpUrl(String.format(CONFERENCES, conferenceId)), JsonNode.class);
                 if (response == null) {
                     return callStatus;
-                } else if ("CONNECTED".equals(getJsonProperty(response, "state", String.class))) {
+                }
+                Boolean conferenceIsActive = getJsonProperty(response, "isActive", Boolean.class);
+                if (conferenceIsActive != null && conferenceIsActive) {
                     callStatus.setCallId(getJsonProperty(response, "id", String.class));
                     callStatus.setCallStatusState(CallStatus.CallStatusState.Connected);
                     return callStatus;
