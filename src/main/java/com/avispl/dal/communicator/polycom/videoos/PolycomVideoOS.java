@@ -823,22 +823,18 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             }
             return null;
         }
-        try {
-            if (Class.forName(type.getName()).isAssignableFrom(String.class)) {
-                return (T) value.asText();
-            } else if (Class.forName(type.getName()).isAssignableFrom(Integer.class)) {
-                return (T) Integer.valueOf(value.asInt());
-            } else if (Class.forName(type.getName()).isAssignableFrom(Boolean.class)) {
-                return (T) Boolean.valueOf(value.asBoolean());
-            } else if (Class.forName(type.getName()).isAssignableFrom(Float.class)) {
-                return (T) Float.valueOf(value.floatValue());
-            } else if (Class.forName(type.getName()).isAssignableFrom(Long.class)) {
-                return (T) Long.valueOf(value.longValue());
-            } else if (Class.forName(type.getName()).isAssignableFrom(ArrayNode.class)) {
-                return (T) value;
-            }
-        } catch (ClassNotFoundException cnfe) {
-            logger.error("Class " + type.getName() + " cannot be found to extract property from the json structure.");
+        if (type.equals(String.class)) {
+            return (T) value.asText();
+        } else if (type.equals(Integer.class)) {
+            return (T) Integer.valueOf(value.asInt());
+        } else if (type.equals(Boolean.class)) {
+            return (T) Boolean.valueOf(value.asBoolean());
+        } else if (type.equals(Float.class)) {
+            return (T) Float.valueOf(value.floatValue());
+        } else if (type.equals(Long.class)) {
+            return (T) Long.valueOf(value.longValue());
+        } else if (type.equals(ArrayNode.class)) {
+            return (T) value;
         }
         throw new UnsupportedOperationException();
     }
