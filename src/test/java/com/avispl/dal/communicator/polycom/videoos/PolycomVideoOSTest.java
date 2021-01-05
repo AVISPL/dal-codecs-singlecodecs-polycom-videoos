@@ -72,4 +72,10 @@ public class PolycomVideoOSTest {
         CallStatus status = polycomVideoOS.retrieveCallStatus("");
         Assert.notNull(status, "Status should be present");
     }
+
+    @Test
+    public void testPropertiesRetrieval() throws Exception {
+        // No exception is thrown -> properties are retrieved properly
+        polycomVideoOS.internalInit();
+    }
 }
