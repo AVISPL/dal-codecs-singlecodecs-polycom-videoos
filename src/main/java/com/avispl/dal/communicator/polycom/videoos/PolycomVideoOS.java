@@ -101,7 +101,6 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private static String MICROPHONES = "rest/audio/microphones";
     private static String APPS = "rest/system/apps";
     private static String SESSIONS = "rest/current/session/sessions";
-    private static String URL_TEMPLATE = "%s://%s/%s";
 
     private final ReentrantLock controlOperationsLock = new ReentrantLock();
     private long latestControlTimestamp;
