@@ -155,7 +155,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             throw new IllegalStateException(String.format("Unable to receive response from %s", CONFERENCE));
         }
 
-        String meetingInfoUrl = buildHttpUrl(getJsonProperty(response.get(0), "href", String.class));
+        String meetingInfoUrl = getJsonProperty(response.get(0), "href", String.class);
         for (int i = 0; i < MAX_STATUS_POLL_ATTEMPT; i++) {
             JsonNode meetingInfo = doGet(meetingInfoUrl, JsonNode.class);
             if (meetingInfo != null) {
@@ -211,7 +211,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         controlOperationsLock.lock();
         try {
             if(!StringUtils.isNullOrEmpty(conferenceId)){
-                JsonNode response = doGet(buildHttpUrl(String.format(CONFERENCES, conferenceId)), JsonNode.class);
+                JsonNode response = doGet(String.format(CONFERENCES, conferenceId), JsonNode.class);
                 if (response == null) {
                     return generateCallStatus(conferenceId, CallStatus.CallStatusState.Disconnected);
                 }
@@ -234,7 +234,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     @Override
     public MuteStatus retrieveMuteStatus() throws Exception {
         checkAndInitialize();
-        Boolean muted = doGet(buildHttpUrl(AUDIO_MUTED), Boolean.class);
+        Boolean muted = doGet(AUDIO_MUTED, Boolean.class);
         if (muted) {
             return MuteStatus.Muted;
         } else {
@@ -371,7 +371,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private Boolean retrieveVideoMuteStatus() throws Exception {
-        JsonNode response = doGet(buildHttpUrl(VIDEO_MUTE), JsonNode.class);
+        JsonNode response = doGet(VIDEO_MUTE, JsonNode.class);
         return getJsonProperty(response, "result", Boolean.class);
     }
 
@@ -524,7 +524,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication, except 403
      */
     private void retrieveSystemStatus(Map<String, String> statistics) throws Exception {
-        ArrayNode response = doGet(buildHttpUrl(STATUS), ArrayNode.class);
+        ArrayNode response = doGet(STATUS, ArrayNode.class);
         response.iterator().forEachRemaining(jsonNode -> {
             String langtag = getJsonProperty(jsonNode, "langtag", String.class);
             ArrayNode stateList = getJsonProperty(jsonNode, "stateList", ArrayNode.class);
@@ -554,7 +554,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private void retrieveCollaborationStatus(Map<String, String> statistics) throws Exception {
-        JsonNode response = doGet(buildHttpUrl(COLLABORATION), JsonNode.class);
+        JsonNode response = doGet(COLLABORATION, JsonNode.class);
         if (!response.isNull()) {
             String sessionState = getJsonProperty(response, "state", String.class);
             statistics.put("Collaboration#Session State", sessionState);
@@ -571,7 +571,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private Integer retrieveVolumeLevel() throws Exception {
-        return doGet(buildHttpUrl(VOLUME), Integer.class);
+        return doGet(VOLUME, Integer.class);
     }
 
     /**
@@ -626,7 +626,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private ArrayNode listConferenceCalls() throws Exception {
-        return doGet(buildHttpUrl(CONFERENCE), ArrayNode.class);
+        return doGet(CONFERENCE, ArrayNode.class);
     }
 
     /**
@@ -639,7 +639,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      */
     private ArrayNode retrieveConferenceCallMediaStats(int conferenceId) throws Exception {
         try {
-            return doGet(buildHttpUrl(String.format(MEDIASTATS, conferenceId)), ArrayNode.class);
+            return doGet(String.format(MEDIASTATS, conferenceId), ArrayNode.class);
         } catch (CommandFailureException cfe) {
             if (cfe.getStatusCode() == 404) {
                 if (logger.isDebugEnabled()) {
@@ -666,7 +666,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication (shared content stats retrieval)
      */
     private void retrieveSharedMediaStats(ContentChannelStats contentChannelStats) throws Exception {
-        JsonNode response = doGet(buildHttpUrl(SHARED_MEDIASTATS), JsonNode.class);
+        JsonNode response = doGet(SHARED_MEDIASTATS, JsonNode.class);
         if(response != null) {
             ArrayNode vars = (ArrayNode) response.get("vars");
             if(vars != null && vars.size() > 0){
@@ -702,7 +702,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private void retrieveSystemInfo(Map<String, String> statistics) throws Exception {
-        JsonNode response = doGet(buildHttpUrl(SYSTEM), JsonNode.class);
+        JsonNode response = doGet(SYSTEM, JsonNode.class);
         if (response == null) {
             return;
         }
@@ -732,7 +732,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private void retrieveApplications(Map<String, String> statistics) throws Exception {
-        JsonNode response = doGet(buildHttpUrl(APPS), JsonNode.class);
+        JsonNode response = doGet(APPS, JsonNode.class);
         JsonNode applications = response.get("apps");
         if (applications == null) {
             return;
@@ -757,7 +757,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private void retrieveSessions(Map<String, String> statistics) throws Exception {
-        JsonNode response = doGet(buildHttpUrl(SESSIONS), JsonNode.class);
+        JsonNode response = doGet(SESSIONS, JsonNode.class);
         JsonNode sessionList = response.get("sessionList");
         if (sessionList == null) {
             return;
@@ -781,7 +781,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private void retrieveMicrophonesStatistics(Map<String, String> statistics) throws Exception {
-        ArrayNode response = doGet(buildHttpUrl(MICROPHONES), ArrayNode.class);
+        ArrayNode response = doGet(MICROPHONES, ArrayNode.class);
         if (response == null) {
             if (logger.isDebugEnabled()) {
                 logger.debug("Cannot retrieve Microphones data.");
@@ -812,7 +812,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private void retrieveContentStatus(Map<String, String> statistics) throws Exception {
-        String response = doGet(buildHttpUrl(CONTENT_STATUS), String.class);
+        String response = doGet(CONTENT_STATUS, String.class);
         statistics.put("Cameras#Content Status", response);
     }
 
@@ -823,7 +823,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private void retrieveConferencingCapabilities(Map<String, String> statistics) throws Exception {
-        JsonNode response = doGet(buildHttpUrl(CONFERENCING_CAPABILITIES), JsonNode.class);
+        JsonNode response = doGet(CONFERENCING_CAPABILITIES, JsonNode.class);
         statistics.put("Conferencing Capabilities#Blast Dial", response.get("canBlastDial").asBoolean() ? "Available" : "Not Available");
         statistics.put("Conferencing Capabilities#Audio Call", response.get("canMakeAudioCall").asBoolean() ? "Available" : "Not Available");
         statistics.put("Conferencing Capabilities#Video Call", response.get("canMakeVideoCall").asBoolean() ? "Available" : "Not Available");
@@ -836,7 +836,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private void retrieveAudioStatus(Map<String, String> statistics) throws Exception {
-        JsonNode response = doGet(buildHttpUrl(AUDIO), JsonNode.class);
+        JsonNode response = doGet(AUDIO, JsonNode.class);
         statistics.put("Audio#Mute Locked", getJsonProperty(response, "muteLocked", String.class));
         statistics.put("Audio#Microphones Connected", getJsonProperty(response, "numOfMicsConnected", String.class));
     }
@@ -891,17 +891,6 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             return (T) value;
         }
         throw new IllegalArgumentException(String.format("Unable to retrieve value for property %s and type %s", property, type.getName()));
-    }
-
-    /**
-     * We need this because login is with https by default but we still have to trust all certificates before init,
-     * the rest of requests are http
-     *
-     * @param url to insert into the URL_TEMPLATE string
-     * @return url with http protocol and current host set
-     */
-    private String buildHttpUrl(String url) {
-        return String.format(URL_TEMPLATE, "http", getHost(), url);
     }
 
     @Override
