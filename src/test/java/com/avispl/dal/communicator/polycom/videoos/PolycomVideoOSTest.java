@@ -62,7 +62,7 @@ public class PolycomVideoOSTest {
         DialDevice dialDevice = new DialDevice();
         dialDevice.setProtocol(Protocol.SIP);
         dialDevice.setCallSpeed(320);
-        dialDevice.setDialString("7771991038@nh.vnoc1.com");
+        dialDevice.setDialString("NH-group500@nh.vnoc1.com");
         String conferenceId = polycomVideoOS.dial(dialDevice);
         Assert.notNull(conferenceId, "ConferenceId must not be nul");
     }
