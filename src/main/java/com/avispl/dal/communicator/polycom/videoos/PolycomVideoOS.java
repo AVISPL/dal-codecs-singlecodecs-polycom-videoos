@@ -14,6 +14,7 @@ import com.avispl.symphony.api.dal.dto.control.call.MuteStatus;
 import com.avispl.symphony.api.dal.dto.control.call.PopupMessage;
 import com.avispl.symphony.api.dal.dto.monitor.*;
 import com.avispl.symphony.api.dal.error.CommandFailureException;
+import com.avispl.symphony.api.dal.error.ResourceNotReachableException;
 import com.avispl.symphony.api.dal.monitor.Monitorable;
 import com.avispl.symphony.dal.communicator.RestCommunicator;
 import com.avispl.symphony.dal.util.StringUtils;
@@ -39,6 +40,9 @@ import java.util.concurrent.locks.ReentrantLock;
  * In order to have codec specific features available, CallController interface is used with dial(), hangup()
  * and callStatus() methods implemented.
  * sendMessage() is not implemented since there's no such functionality available in VideoOS REST API for now.
+ *
+ * Polycom VideoOS REST API Reference Guide:
+ * https://support.polycom.com/content/dam/polycom-support/products/telepresence-and-video/poly-studio-x/user/en/poly-video-restapi.pdf
  */
 public class PolycomVideoOS extends RestCommunicator implements CallController, Monitorable, Controller {
 
@@ -61,22 +65,23 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 try {
                     authenticate();
                     response = execution.execute(request, body);
-                } catch (Exception e) {
-                    logger.error("Authentication failed during interception: " + e.getMessage());
-                    if (e.getMessage().startsWith("Cannot reach resource") && e.getMessage().contains(SESSION)) {
+                } catch (ResourceNotReachableException e) {
+                    if (e.getMessage().contains(SESSION)) {
                         // In case it's been rebooted by some other resource - we need to react to that.
                         // Normally we expect that the authorization request timeouts, since previous one failed with
                         // a specific error code, so basically we do the same as before - authenticate + retry previous
                         // request but with the destroy action called first, since init will be done next when
                         // authentication is requested.
-                        internalDestroy();
                         try {
+                            disconnect();
                             authenticate();
                             response = execution.execute(request, body);
                         } catch (Exception ex) {
-                            throw new IOException("Authorization failed after the communicator destruction: " + ex.getMessage());
+                            throw new IOException("Unable to recover the http connection during the request interception: " + ex.getMessage());
                         }
                     }
+                } catch (Exception e) {
+                    logger.error("Authentication failed during interception: " + e.getMessage());
                 }
             }
             return response;
@@ -101,6 +106,8 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private static String MICROPHONES = "rest/audio/microphones";
     private static String APPS = "rest/system/apps";
     private static String SESSIONS = "rest/current/session/sessions";
+    private static int DEFAULT_CALL_RATE;
+    private static final int MAX_STATUS_POLL_ATTEMPT = 5;
 
     private final ReentrantLock controlOperationsLock = new ReentrantLock();
     private long latestControlTimestamp;
@@ -108,8 +115,6 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private EndpointStatistics localEndpointStatistics;
 
     private String sessionId;
-    private static int DEFAULT_CALL_RATE;
-    private static final int MAX_STATUS_POLL_ATTEMPT = 5;
 
     /* Grace period for device reboot action. It takes about 3 minutes for the device to get fully
      * functional after reboot is triggered */
@@ -132,12 +137,18 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         DEFAULT_CALL_RATE = Integer.parseInt(properties.getProperty("defaultCallRate"));
     }
 
+    /**
+     * {@inheritDoc}
+
+     *
+     *
+     *
+     */
     @Override
     public String dial(DialDevice dialDevice) throws Exception {
         if (logger.isDebugEnabled()) {
             logger.debug("Dialing using dial string: " + dialDevice.getDialString());
         }
-        checkAndInitialize();
         ObjectNode request = JsonNodeFactory.instance.objectNode();
         Integer callSpeed = dialDevice.getCallSpeed();
 
@@ -178,20 +189,22 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * and collecting some information available while in the call only - it'll end up with a 404 error.
      * If there's a conferenceId available - only one conference is removed, otherwise - the method
      * iterates through all of the available conferences and removes them.
+     *
+     * {@link PolycomVideoOS} according to the VideoOS documentation for DELETE: /conferences/{conferenceId} method:
+     *      This API hangs up and disconnects the specified conference call.
      */
     @Override
     public void hangup(String conferenceId) throws Exception {
         if (logger.isDebugEnabled()) {
             logger.debug("Hangup string received: " + conferenceId);
         }
-        checkAndInitialize();
         controlOperationsLock.lock();
         try {
             if (!StringUtils.isNullOrEmpty(conferenceId)) {
                 doDelete(String.format(CONFERENCES, conferenceId));
             } else {
-                ArrayNode conferenceCall = listConferenceCalls();
-                for (JsonNode node : conferenceCall) {
+                ArrayNode conferenceCalls = listConferenceCalls();
+                for (JsonNode node : conferenceCalls) {
                     Integer id = getJsonProperty(node, "id", Integer.class);
                     doDelete(String.format(CONFERENCES, id));
                 }
@@ -201,12 +214,15 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     */
     @Override
     public CallStatus retrieveCallStatus(String conferenceId) throws Exception {
         if (logger.isDebugEnabled()) {
             logger.debug("Retrieving call status with string: " + conferenceId);
         }
-        checkAndInitialize();
         controlOperationsLock.lock();
         try {
             if(!StringUtils.isNullOrEmpty(conferenceId)){
@@ -219,9 +235,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                     return generateCallStatus(getJsonProperty(response, "id", String.class), CallStatus.CallStatusState.Connected);
                 }
             } else {
-                ArrayNode conferences = listConferenceCalls();
-                if(conferences != null && conferences.size() > 0){
-                    return generateCallStatus(getJsonProperty(conferences.get(0), "id", String.class), CallStatus.CallStatusState.Connected);
+                ArrayNode conferenceCalls = listConferenceCalls();
+                if(conferenceCalls != null && conferenceCalls.size() > 0){
+                    return generateCallStatus(getJsonProperty(conferenceCalls.get(0), "id", String.class), CallStatus.CallStatusState.Connected);
                 }
             }
         } finally {
@@ -232,9 +248,8 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
     @Override
     public MuteStatus retrieveMuteStatus() throws Exception {
-        checkAndInitialize();
         Boolean muted = doGet(AUDIO_MUTED, Boolean.class);
-        if (muted) {
+        if (null != muted && muted) {
             return MuteStatus.Muted;
         } else {
             return MuteStatus.Unmuted;
@@ -248,13 +263,11 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
     @Override
     public void mute() throws Exception {
-        checkAndInitialize();
         doPost(AUDIO_MUTED, true);
     }
 
     @Override
     public void unmute() throws Exception {
-        checkAndInitialize();
         doPost(AUDIO_MUTED, false);
     }
 
@@ -263,7 +276,6 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         ExtendedStatistics extendedStatistics = new ExtendedStatistics();
         EndpointStatistics endpointStatistics = new EndpointStatistics();
 
-        checkAndInitialize();
         controlOperationsLock.lock();
         try {
             if (isValidControlCoolDown() && localStatistics != null && localEndpointStatistics != null) {
@@ -336,17 +348,6 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
 
         return Arrays.asList(extendedStatistics, endpointStatistics);
-    }
-
-    /**
-     * Check if the device adapter is initialized and run internalInit() if not.
-     *
-     * @throws Exception if any error occurs
-     */
-    private void checkAndInitialize() throws Exception {
-        if (!isInitialized()) {
-            internalInit();
-        }
     }
 
     /**
@@ -689,7 +690,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         boolean success = doPost(REBOOT, rebootRequest).getStatusCode().is2xxSuccessful();
         if (success) {
             sessionId = null;
-            internalDestroy();
+            disconnect();
         }
         return success;
     }
@@ -922,7 +923,6 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         String property = controllableProperty.getProperty();
         String value = String.valueOf(controllableProperty.getValue());
 
-        checkAndInitialize();
         controlOperationsLock.lock();
         try {
             switch (property) {
