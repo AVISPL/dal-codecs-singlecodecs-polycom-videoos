@@ -88,24 +88,30 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
     }
 
-    private static String SESSION = "rest/current/session";
-    private static String STATUS = "rest/system/status";
-    private static String CONFERENCING_CAPABILITIES = "rest/conferences/capabilities";
-    private static String CONFERENCE = "rest/conferences"; // POST for calling a single participant, GET to list all
-    private static String CONFERENCES = "rest/conferences/%s"; // DELETE to disconnect
-    private static String MEDIASTATS = "rest/conferences/%s/mediastats";
-    private static String SHARED_MEDIASTATS = "/rest/mediastats";
-    private static String AUDIO = "rest/audio";
-    private static String AUDIO_MUTED = "rest/audio/muted";
-    private static String VIDEO_MUTE = "rest/video/local/mute";
-    private static String CONTENT_STATUS = "rest/cameras/contentstatus";
-    private static String VOLUME = "rest/audio/volume";
-    private static String SYSTEM = "rest/system";
-    private static String REBOOT = "rest/system/reboot";
-    private static String COLLABORATION = "rest/collaboration";
-    private static String MICROPHONES = "rest/audio/microphones";
-    private static String APPS = "rest/system/apps";
-    private static String SESSIONS = "rest/current/session/sessions";
+    private static final String SESSION = "rest/current/session";
+    private static final String STATUS = "rest/system/status";
+    private static final String CONFERENCING_CAPABILITIES = "rest/conferences/capabilities";
+    private static final String CONFERENCES = "rest/conferences"; // POST for calling a single participant, GET to list all
+    private static final String CONFERENCE = "rest/conferences/%s"; // DELETE to disconnect
+    private static final String MEDIASTATS = "rest/conferences/%s/mediastats";
+    private static final String SHARED_MEDIASTATS = "/rest/mediastats";
+    private static final String AUDIO = "rest/audio";
+    private static final String AUDIO_MUTED = "rest/audio/muted";
+    private static final String VIDEO_MUTE = "rest/video/local/mute";
+    private static final String CONTENT_STATUS = "rest/cameras/contentstatus";
+    private static final String VOLUME = "rest/audio/volume";
+    private static final String SYSTEM = "rest/system";
+    private static final String REBOOT = "rest/system/reboot";
+    private static final String COLLABORATION = "rest/collaboration";
+    private static final String MICROPHONES = "rest/audio/microphones";
+    private static final String APPS = "rest/system/apps";
+    private static final String SESSIONS = "rest/current/session/sessions";
+
+    private static final String CONTROL_MUTE_VIDEO = "Mute Local Video";
+    private static final String CONTROL_MUTE_MICROPHONES = "Mute Microphones";
+    private static final String CONTROL_AUDIO_VOLUME = "Audio Volume";
+    private static final String CONTROL_REBOOT = "Reboot";
+
     private static int DEFAULT_CALL_RATE;
     private static final int MAX_STATUS_POLL_ATTEMPT = 5;
 
@@ -139,10 +145,10 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
     /**
      * {@inheritDoc}
-
      *
-     *
-     *
+     * If the call is in progress and another participant is addressed with {@link #CONFERENCES} POST call -
+     * VideoOS Rest API will add the participant as another connection for the existing conference call, without
+     * creating an additional conference call, so it is commonly expected that there's a single conference at most
      */
     @Override
     public String dial(DialDevice dialDevice) throws Exception {
@@ -159,10 +165,10 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         if (protocol != null) {
             request.put("dialType", protocol.name());
         }
-        ArrayNode response = doPost(CONFERENCE, request, ArrayNode.class);
+        ArrayNode response = doPost(CONFERENCES, request, ArrayNode.class);
         if (response == null) {
             // Valid response was not received, cannot go further to checking the conference id retrieval
-            throw new IllegalStateException(String.format("Unable to receive response from %s", CONFERENCE));
+            throw new IllegalStateException(String.format("Unable to receive response from %s", CONFERENCES));
         }
 
         String meetingInfoUrl = getJsonProperty(response.get(0), "href", String.class);
@@ -201,12 +207,12 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         controlOperationsLock.lock();
         try {
             if (!StringUtils.isNullOrEmpty(conferenceId)) {
-                doDelete(String.format(CONFERENCES, conferenceId));
+                doDelete(String.format(CONFERENCE, conferenceId));
             } else {
                 ArrayNode conferenceCalls = listConferenceCalls();
                 for (JsonNode node : conferenceCalls) {
                     Integer id = getJsonProperty(node, "id", Integer.class);
-                    doDelete(String.format(CONFERENCES, id));
+                    doDelete(String.format(CONFERENCE, id));
                 }
             }
         } finally {
@@ -226,7 +232,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         controlOperationsLock.lock();
         try {
             if(!StringUtils.isNullOrEmpty(conferenceId)){
-                JsonNode response = doGet(String.format(CONFERENCES, conferenceId), JsonNode.class);
+                JsonNode response = doGet(String.format(CONFERENCE, conferenceId), JsonNode.class);
                 if (response == null) {
                     return generateCallStatus(conferenceId, CallStatus.CallStatusState.Disconnected);
                 }
@@ -261,16 +267,54 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         throw new UnsupportedOperationException("Send message functionality is not supported by VideoOS API");
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * Since we need to react on the mute status change to have {@link #localStatistics} data synchronized with
+     * the actual values that are sent here - we need to set new status for the locally stored control properties.
+     * Also this specific request doesn't have any response body, so the only piece of data that we can use to verify
+     * the request is response code
+     */
     @Override
     public void mute() throws Exception {
-        doPost(AUDIO_MUTED, true);
+        if(doPost(AUDIO_MUTED, true).getStatusCode().is2xxSuccessful()) {
+            updateLocalControllablePropertyState(CONTROL_MUTE_MICROPHONES, "1");
+        }
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * Since we need to react to the mute status change to have {@link #localStatistics} data synchronized with
+     * the actual values that are sent here - we need to set new status for the locally stored control properties.
+     * This is why response code is being checked for the operation.
+     * Also this specific request doesn't have any response body, so the only piece of data that we can use to verify
+     * the request is response code
+     */
     @Override
     public void unmute() throws Exception {
-        doPost(AUDIO_MUTED, false);
+        if(doPost(AUDIO_MUTED, false).getStatusCode().is2xxSuccessful()) {
+            updateLocalControllablePropertyState(CONTROL_MUTE_MICROPHONES, "0");
+        }
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * Statistics collection implies calling multiple endpoints on VideoOS Rest API:
+     * rest/system/status
+     * rest/system
+     * rest/system/apps
+     * rest/current/session/sessions
+     * rest/audio/microphones
+     * rest/cameras/contentstatus
+     * rest/conferences/capabilities
+     * rest/audio
+     * rest/collaboration
+     *
+     * With the current synchronous approach, collecting all the statistics takes 1-2 sec so making this async for
+     * now may not pay off, since it's not possible to reduce the number of requests and reach the same effect.
+     */
     @Override
     public List<Statistics> getMultipleStatistics() throws Exception {
         ExtendedStatistics extendedStatistics = new ExtendedStatistics();
@@ -295,6 +339,8 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
             Map<String, String> statistics = new HashMap<>();
             List<AdvancedControllableProperty> controls = new ArrayList<>();
+
+            long statisticsCollectionStartTime = System.currentTimeMillis();
             retrieveSystemStatus(statistics);
             retrieveSystemInfo(statistics);
             retrieveApplications(statistics);
@@ -305,14 +351,14 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             retrieveAudioStatus(statistics);
             retrieveCollaborationStatus(statistics);
 
-            statistics.put("Audio Volume", "");
-            controls.add(createSlider("Audio Volume", 0.0f, 100.0f, Float.valueOf(retrieveVolumeLevel())));
-            statistics.put("Mute Microphones", "");
-            controls.add(createSwitch("Mute Microphones", "On", "Off", retrieveMuteStatus().equals(MuteStatus.Muted)));
-            statistics.put("Mute Local Video", "");
-            controls.add(createSwitch("Mute Local Video", "On", "Off", retrieveVideoMuteStatus()));
-            statistics.put("Reboot", "");
-            controls.add(createButton("Reboot", "Reboot", "Rebooting...", REBOOT_GRACE_PERIOD_MS));
+            statistics.put(CONTROL_AUDIO_VOLUME, "");
+            controls.add(createSlider(CONTROL_AUDIO_VOLUME, 0.0f, 100.0f, Float.valueOf(retrieveVolumeLevel())));
+            statistics.put(CONTROL_MUTE_MICROPHONES, "");
+            controls.add(createSwitch(CONTROL_MUTE_MICROPHONES, "On", "Off", retrieveMuteStatus().equals(MuteStatus.Muted)));
+            statistics.put(CONTROL_MUTE_VIDEO, "");
+            controls.add(createSwitch(CONTROL_MUTE_VIDEO, "On", "Off", retrieveVideoMuteStatus()));
+            statistics.put(CONTROL_REBOOT, "");
+            controls.add(createButton(CONTROL_REBOOT, CONTROL_REBOOT, "Rebooting...", REBOOT_GRACE_PERIOD_MS));
 
             extendedStatistics.setStatistics(statistics);
             extendedStatistics.setControllableProperties(controls);
@@ -332,7 +378,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 ContentChannelStats contentChannelStats = new ContentChannelStats();
 
                 ArrayNode conferenceCallMediaStats = retrieveConferenceCallMediaStats(conferenceId);
-                retrieveConferenceCallMediaStats(conferenceCallMediaStats, audioChannelStats, videoChannelStats, callStats);
+                processConferenceCallMediaStats(conferenceCallMediaStats, audioChannelStats, videoChannelStats, callStats);
                 retrieveSharedMediaStats(contentChannelStats);
 
                 endpointStatistics.setCallStats(callStats);
@@ -341,6 +387,10 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 endpointStatistics.setContentChannelStats(contentChannelStats);
             }
 
+            if(logger.isDebugEnabled()) {
+                logger.debug(String.format("Finished collecting statistics in %s sec.",
+                        (System.currentTimeMillis() - statisticsCollectionStartTime) / 1000));
+            }
             localStatistics = extendedStatistics;
             localEndpointStatistics = endpointStatistics;
         } finally {
@@ -348,6 +398,20 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
 
         return Arrays.asList(extendedStatistics, endpointStatistics);
+    }
+
+    /**
+     * Updates the local value of a given controllable property.
+     *
+     * @param controlName name of a controllable property stored in {@link #localStatistics} variable
+     * @param value target value of a controllable property
+     */
+    private void updateLocalControllablePropertyState(String controlName, String value) {
+        if(null != localStatistics) {
+            localStatistics.getControllableProperties().stream().filter(advancedControllableProperty ->
+                    advancedControllableProperty.getName().equals(controlName)).findFirst()
+                    .ifPresent(advancedControllableProperty -> advancedControllableProperty.setValue(value));
+        }
     }
 
     /**
@@ -377,27 +441,42 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
     /**
      * Set local video feed mute status
+     * When operation is succeeded - we need to update {@link #localStatistics} with the new state of the
+     * controllable property.
      *
      * @param status boolean indicating the target outcoming video feed state
-     * @return boolean value, indicating the success of the mute status change.
      * @throws Exception during http communication
      */
-    private Boolean updateVideoMuteStatus(boolean status) throws Exception {
+    private void updateVideoMuteStatus(boolean status) throws Exception {
         ObjectNode request = JsonNodeFactory.instance.objectNode();
         request.put("mute", status);
         JsonNode response = doPost(VIDEO_MUTE, request, JsonNode.class);
-        return getJsonProperty(response, "success", Boolean.class);
+
+        Boolean success = getJsonProperty(response, "success", Boolean.class);
+        if(Boolean.TRUE.equals(success)) {
+            updateLocalControllablePropertyState(CONTROL_MUTE_VIDEO, status ? "1" : "0");
+        }
     }
 
     /**
      * Get media statistics related to the current conference call
+     *
+     * Since VideoOS API does not provide any specific values for totalPacketLoss/percentPacketLoss/callRate - these
+     * parameters are calculated based on audio and video channel rate/packetLoss information. VideoOS audio/video
+     * channel rates are reported is in kbps (kilobits per second) by default,
+     * which matches Symphony {@link ChannelStats} model
+     *
+     * If both video and audio channel stats are available and the specific value=!null - the data is summed up.
+     * Null values are omitted, having both audio and video channel packet loss data==null will end up with passing
+     * null value as the callStats parameter value (as an oppose to 0, which would mean that the values are provided
+     * and are equal to zero).
      *
      * @param conferenceCallMediaStats data retrieved from the VidoOS API
      * @param audioChannelStats        entity containing audio stats
      * @param videoChannelStats        entity containing video stats
      * @param callStats                entity containing call stats
      */
-    private void retrieveConferenceCallMediaStats(ArrayNode conferenceCallMediaStats, AudioChannelStats audioChannelStats,
+    private void processConferenceCallMediaStats(ArrayNode conferenceCallMediaStats, AudioChannelStats audioChannelStats,
                                                   VideoChannelStats videoChannelStats, CallStats callStats) {
         conferenceCallMediaStats.forEach(jsonNode -> {
             switch (Objects.requireNonNull(getJsonProperty(jsonNode, "mediaDirection", String.class))) {
@@ -458,17 +537,13 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                     break;
             }
         });
-
         callStats.setTotalPacketLossTx(sumPacketData(audioChannelStats.getPacketLossTx(), videoChannelStats.getPacketLossTx()));
         callStats.setTotalPacketLossRx(sumPacketData(audioChannelStats.getPacketLossRx(), videoChannelStats.getPacketLossRx()));
         callStats.setPercentPacketLossTx(sumPacketData(audioChannelStats.getPercentPacketLossTx(), videoChannelStats.getPercentPacketLossTx()));
         callStats.setPercentPacketLossRx(sumPacketData(audioChannelStats.getPercentPacketLossRx(), videoChannelStats.getPercentPacketLossRx()));
 
-        Integer callRateRx = sumPacketData(videoChannelStats.getBitRateRx(), audioChannelStats.getBitRateRx());
-        callStats.setCallRateRx((callRateRx == null) ? null : (callRateRx / 2));
-
-        Integer callRateTx = (sumPacketData(videoChannelStats.getBitRateTx(), audioChannelStats.getBitRateTx()));
-        callStats.setCallRateTx((callRateTx == null) ? null : (callRateTx / 2));
+        callStats.setCallRateRx(sumPacketData(videoChannelStats.getBitRateRx(), audioChannelStats.getBitRateRx()));
+        callStats.setCallRateTx(sumPacketData(videoChannelStats.getBitRateTx(), audioChannelStats.getBitRateTx()));
     }
 
     /**
@@ -576,17 +651,27 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
     /**
      * Update device's volume with a given value
+     * Since we need to react to the volume level change to have {@link #localStatistics} data synchronized with
+     * the actual values that are sent here - we need to set new status for the locally stored control properties.
+     * This is why response code is being checked for the operation.
+     * Also this specific request doesn't have any response body, so the only piece of data that we can use to verify
+     * the request is response code.
      *
      * @param value target value for the device volume
-     * @return boolean value indicating the success of the operation
      * @throws Exception during http communication
      */
-    private boolean updateVolumeLevel(int value) throws Exception {
-        return doPost(VOLUME, value).getStatusCode().is2xxSuccessful();
+    private void updateVolumeLevel(int value) throws Exception {
+        if(doPost(VOLUME, value).getStatusCode().is2xxSuccessful()) {
+            updateLocalControllablePropertyState(CONTROL_AUDIO_VOLUME, String.valueOf(value));
+        }
     }
 
     /**
      * Retrieve stats of currently active conference call
+     * VideoOS Rest API populate a list of conference calls when {@link #CONFERENCE} call is performed.
+     * The default behaviour for the {@link PolycomVideoOS} is listed in {@link #dial(DialDevice)} method.
+     * It is considered that there is a single active conference at any given moment of time, so 0th conference is
+     * fetched by default.
      *
      * @param statistics map to put values to
      * @return active conference id (#0), -1 if there are no active conferences available
@@ -598,19 +683,26 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             return -1;
         }
         JsonNode activeConference = conferenceCalls.get(0);
-        JsonNode terminal = (activeConference.get("terminals")).get(0);
-        JsonNode connections = (activeConference.get("connections")).get(0);
-        statistics.put("Active Conference#Conference ID", getJsonProperty(activeConference, "id", String.class));
+        ArrayNode terminals = (ArrayNode) activeConference.get("terminals");
+        ArrayNode connections = (ArrayNode) activeConference.get("connections");
 
-        if (terminal != null) {
-            statistics.put("Active Conference#Conference address", getJsonProperty(terminal, "address", String.class));
-            if (terminal.get(0) != null) {
-                statistics.put("Active Conference#Conference system", getJsonProperty(terminal.get(0), "systemID", String.class));
+        statistics.put("Active Conference#Conference ID", getJsonProperty(activeConference, "id", String.class));
+        Long conferenceStartTimestamp = getJsonProperty(activeConference, "startTime", Long.class);
+        if(null != conferenceStartTimestamp) {
+            statistics.put("Active Conference#Conference start time", String.valueOf(new Date(conferenceStartTimestamp)));
+        }
+
+        if (terminals != null) {
+            for(int i = 0; i < terminals.size(); i++) {
+                statistics.put(String.format("Active Conference#Terminal %s address", i), getJsonProperty(terminals.get(i), "address", String.class));
+                statistics.put(String.format("Active Conference#Terminal %s system", i), getJsonProperty(terminals.get(i), "systemID", String.class));
             }
         }
         if (connections != null) {
-            statistics.put("Active Conference#Conference type", getJsonProperty(connections, "callType", String.class));
-            statistics.put("Active Conference#Conference info", getJsonProperty(connections, "callInfo", String.class));
+            for(int i = 0; i < connections.size(); i++) {
+                statistics.put(String.format("Active Conference#Connection %s type", i), getJsonProperty(connections.get(i), "callType", String.class));
+                statistics.put(String.format("Active Conference#Connection %s info", i), getJsonProperty(connections.get(i), "callInfo", String.class));
+            }
         }
         Long activeConferenceStartTime = getJsonProperty(activeConference, "startTime", Long.class);
         if (activeConferenceStartTime != null) {
@@ -626,7 +718,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private ArrayNode listConferenceCalls() throws Exception {
-        return doGet(CONFERENCE, ArrayNode.class);
+        return doGet(CONFERENCES, ArrayNode.class);
     }
 
     /**
@@ -684,7 +776,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      *
      * @throws Exception during http communication
      */
-    private boolean reboot() throws Exception {
+    private void reboot() throws Exception {
         ObjectNode rebootRequest = JsonNodeFactory.instance.objectNode();
         rebootRequest.put("action", "reboot");
         boolean success = doPost(REBOOT, rebootRequest).getStatusCode().is2xxSuccessful();
@@ -692,7 +784,6 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             sessionId = null;
             disconnect();
         }
-        return success;
     }
 
     /**
@@ -926,7 +1017,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         controlOperationsLock.lock();
         try {
             switch (property) {
-                case "Mute Microphones":
+                case CONTROL_MUTE_MICROPHONES:
                     if (value.equals("0")) {
                         unmute();
                     } else {
@@ -934,15 +1025,17 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                     }
                     updateLatestControlTimestamp();
                     break;
-                case "Mute Local Video":
+                case CONTROL_MUTE_VIDEO:
                     updateVideoMuteStatus(value.equals("1"));
+                    updateLatestControlTimestamp();
                     break;
-                case "Audio Volume":
+                case CONTROL_AUDIO_VOLUME:
                     updateVolumeLevel(Math.round(Float.parseFloat(value)));
                     updateLatestControlTimestamp();
                     break;
-                case "Reboot":
+                case CONTROL_REBOOT:
                     reboot();
+                    updateLatestControlTimestamp();
                     break;
                 default:
                     break;
