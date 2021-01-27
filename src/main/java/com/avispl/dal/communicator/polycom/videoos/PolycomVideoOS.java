@@ -340,7 +340,6 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             Map<String, String> statistics = new HashMap<>();
             List<AdvancedControllableProperty> controls = new ArrayList<>();
 
-            long statisticsCollectionStartTime = System.currentTimeMillis();
             retrieveSystemStatus(statistics);
             retrieveSystemInfo(statistics);
             retrieveApplications(statistics);
@@ -387,10 +386,6 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 endpointStatistics.setContentChannelStats(contentChannelStats);
             }
 
-            if(logger.isDebugEnabled()) {
-                logger.debug(String.format("Finished collecting statistics in %s sec.",
-                        (System.currentTimeMillis() - statisticsCollectionStartTime) / 1000));
-            }
             localStatistics = extendedStatistics;
             localEndpointStatistics = endpointStatistics;
         } finally {
