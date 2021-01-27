@@ -665,7 +665,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * Retrieve stats of currently active conference call
      * VideoOS Rest API populate a list of conference calls when {@link #CONFERENCE} call is performed.
      * The default behaviour for the {@link PolycomVideoOS} is listed in {@link #dial(DialDevice)} method.
-     * It is considered that there is a single active conference at any given moment of time, so 0th conference is
+     * It is expected that there is a single active conference at most at any given moment of time, so 0th conference is
      * fetched by default.
      *
      * @param statistics map to put values to
