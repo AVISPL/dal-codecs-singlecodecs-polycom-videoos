@@ -50,11 +50,11 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
     /**
      * Interceptor for RestTemplate that injects
-     * Cookie header and reacts to the communicator state - after reboot the certificates on the device get
-     * refreshed that results with timeouts on https requests. In order to overcome this - communicator is being internally
-     * destroyed on the successful reboot action. Hovewer, we cannot guarantee that any other resource does not issue
-     * reboot or certificates do not get refreshed for other reasons, so we check for a specific error on
-     * authorization event and reinitialize the communicator here.
+     *
+     * Currently, a reboot action changes previously accepted certificates, which would lead to
+     * {@link ResourceNotReachableException} without a proper way to recover. Current workaround is to call
+     * {@link #disconnect()} on reboot and on {@link ResourceNotReachableException} in the
+     * {@link PolycomVideoOSInterceptor} in case if the device has been rebooted externally.
      */
     class PolycomVideoOSInterceptor implements ClientHttpRequestInterceptor {
         @Override
@@ -768,6 +768,10 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
     /**
      * Request device reboot
+     * Currently, a reboot action changes previously accepted certificates, which would lead to
+     * {@link ResourceNotReachableException} without a proper way to recover. Current workaround is to call
+     * {@link #disconnect()} on reboot and on {@link ResourceNotReachableException} in the
+     * {@link PolycomVideoOSInterceptor} in case if the device has been rebooted externally.
      *
      * @throws Exception during http communication
      */
