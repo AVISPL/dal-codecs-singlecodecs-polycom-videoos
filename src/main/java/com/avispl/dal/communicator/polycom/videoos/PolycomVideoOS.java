@@ -112,19 +112,40 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private static final String CONTROL_AUDIO_VOLUME = "Audio Volume";
     private static final String CONTROL_REBOOT = "Reboot";
 
-    private static int DEFAULT_CALL_RATE;
+    /** A number of attempts to perform for getting the conference (call) status while performing
+     * {@link #dial(DialDevice)} operation
+     */
     private static final int MAX_STATUS_POLL_ATTEMPT = 5;
+    /**
+     * Default call rate to use for {@link #dial(DialDevice)} operations. Retrieved from the adapter.properties file
+     */
+    private int DEFAULT_CALL_RATE;
+    /**
+     * Timestamp of the last control operation, used to determine whether we need to wait
+     * for {@link #CONTROL_OPERATION_COOLDOWN_MS} before collecting new statistics
+     */
+    private long latestControlTimestamp;
+    /**
+     * Session Id used for authorization
+     */
+    private String sessionId;
+    /**
+     * Grace period for device reboot action. It takes about 3 minutes for the device to get fully
+     * functional after reboot is triggered
+     */
+    private static final int REBOOT_GRACE_PERIOD_MS = 200000;
+    /**
+     * Cooldown period for control operation. Most control operations (toggle/slider based in this case) may be
+     * requested multiple times in a row. Normally, a control operation would trigger an emergency delivery action,
+     * which is not wanted in this case - such control operations will stack multiple statistics retrieval calls,
+     * while instead we can define a cooldown period, so multiple controls operations will be stacked within this
+     * period and the control states are modified within the {@link #localStatistics} variable.
+     */
+    private static final int CONTROL_OPERATION_COOLDOWN_MS = 5000;
 
     private final ReentrantLock controlOperationsLock = new ReentrantLock();
-    private long latestControlTimestamp;
     private ExtendedStatistics localStatistics;
     private EndpointStatistics localEndpointStatistics;
-
-    private String sessionId;
-
-    /* Grace period for device reboot action. It takes about 3 minutes for the device to get fully
-     * functional after reboot is triggered */
-    private static final int REBOOT_GRACE_PERIOD_MS = 200000;
 
     /**
      * Instantiate and object with trustAllCertificates set to 'true' for being able to
@@ -148,7 +169,11 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      *
      * If the call is in progress and another participant is addressed with {@link #CONFERENCES} POST call -
      * VideoOS Rest API will add the participant as another connection for the existing conference call, without
-     * creating an additional conference call, so it is commonly expected that there's a single conference at most
+     * creating an additional conference call, so it is commonly expected that there's a single conference at most.
+     *
+     * After sending dial command we fetch for the status of the new conference call.
+     * If we can't verify (via matching of the dialString (of the DialDevice) to the remoteAddress
+     * (of the call stats returned from the device) null is returned, if both have matched then the call id is returned.
      */
     @Override
     public String dial(DialDevice dialDevice) throws Exception {
@@ -168,7 +193,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         ArrayNode response = doPost(CONFERENCES, request, ArrayNode.class);
         if (response == null) {
             // Valid response was not received, cannot go further to checking the conference id retrieval
-            throw new IllegalStateException(String.format("Unable to receive response from %s", CONFERENCES));
+            throw new RuntimeException(String.format("Unable to receive response from %s", CONFERENCES));
         }
 
         String meetingInfoUrl = getJsonProperty(response.get(0), "href", String.class);
@@ -255,7 +280,10 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     @Override
     public MuteStatus retrieveMuteStatus() throws Exception {
         Boolean muted = doGet(AUDIO_MUTED, Boolean.class);
-        if (null != muted && muted) {
+        if (muted == null) {
+            throw new RuntimeException("Unable to retrieve audio mute status.");
+        }
+        if (muted) {
             return MuteStatus.Muted;
         } else {
             return MuteStatus.Unmuted;
@@ -272,14 +300,14 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      *
      * Since we need to react on the mute status change to have {@link #localStatistics} data synchronized with
      * the actual values that are sent here - we need to set new status for the locally stored control properties.
-     * Also this specific request doesn't have any response body, so the only piece of data that we can use to verify
-     * the request is response code
+     *
+     * Response code is handled by {@link com.avispl.symphony.dal.communicator.HttpCommunicator} so there's no
+     * need for an additional status code check for validation.
      */
     @Override
     public void mute() throws Exception {
-        if(doPost(AUDIO_MUTED, true).getStatusCode().is2xxSuccessful()) {
-            updateLocalControllablePropertyState(CONTROL_MUTE_MICROPHONES, "1");
-        }
+        doPost(AUDIO_MUTED, true);
+        updateLocalControllablePropertyState(CONTROL_MUTE_MICROPHONES, "1");
     }
 
     /**
@@ -288,14 +316,14 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * Since we need to react to the mute status change to have {@link #localStatistics} data synchronized with
      * the actual values that are sent here - we need to set new status for the locally stored control properties.
      * This is why response code is being checked for the operation.
-     * Also this specific request doesn't have any response body, so the only piece of data that we can use to verify
-     * the request is response code
+     *
+     * Response code is handled by {@link com.avispl.symphony.dal.communicator.HttpCommunicator} so there's no
+     * need for an additional status code check for validation.
      */
     @Override
     public void unmute() throws Exception {
-        if(doPost(AUDIO_MUTED, false).getStatusCode().is2xxSuccessful()) {
-            updateLocalControllablePropertyState(CONTROL_MUTE_MICROPHONES, "0");
-        }
+        doPost(AUDIO_MUTED, false);
+        updateLocalControllablePropertyState(CONTROL_MUTE_MICROPHONES, "0");
     }
 
     /**
@@ -438,9 +466,16 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * Set local video feed mute status
      * When operation is succeeded - we need to update {@link #localStatistics} with the new state of the
      * controllable property.
+     * When operation has failed - RuntimeException is thrown, containing the reason of an unsuccessful operation,
+     * according to the {@link #VIDEO_MUTE} response body model:
+     *    {
+     *    "success": boolean,
+     *    "reason": “string”
+     *    }
+     *
      *
      * @param status boolean indicating the target outcoming video feed state
-     * @throws Exception during http communication
+     * @throws Exception if any error has occurred
      */
     private void updateVideoMuteStatus(boolean status) throws Exception {
         ObjectNode request = JsonNodeFactory.instance.objectNode();
@@ -450,6 +485,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         Boolean success = getJsonProperty(response, "success", Boolean.class);
         if(Boolean.TRUE.equals(success)) {
             updateLocalControllablePropertyState(CONTROL_MUTE_VIDEO, status ? "1" : "0");
+        } else {
+            throw new RuntimeException("Unable to update local video mute status: " +
+                    getJsonProperty(response, "reason", String.class));
         }
     }
 
@@ -649,16 +687,15 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * Since we need to react to the volume level change to have {@link #localStatistics} data synchronized with
      * the actual values that are sent here - we need to set new status for the locally stored control properties.
      * This is why response code is being checked for the operation.
-     * Also this specific request doesn't have any response body, so the only piece of data that we can use to verify
-     * the request is response code.
+     * Response code is handled by {@link com.avispl.symphony.dal.communicator.HttpCommunicator} so there's no
+     * need for an additional status code check for validation.
      *
      * @param value target value for the device volume
      * @throws Exception during http communication
      */
     private void updateVolumeLevel(int value) throws Exception {
-        if(doPost(VOLUME, value).getStatusCode().is2xxSuccessful()) {
-            updateLocalControllablePropertyState(CONTROL_AUDIO_VOLUME, String.valueOf(value));
-        }
+        doPost(VOLUME, value);
+        updateLocalControllablePropertyState(CONTROL_AUDIO_VOLUME, String.valueOf(value));
     }
 
     /**
@@ -670,13 +707,21 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      *
      * @param statistics map to put values to
      * @return active conference id (#0), -1 if there are no active conferences available
-     * @throws Exception during http communication
+     * @throws IllegalStateException if more than 1 active conference was found
+     * @throws Exception if any other error has occurred
      */
     private Integer retrieveActiveConferenceCallStatistics(Map<String, String> statistics) throws Exception {
         ArrayNode conferenceCalls = listConferenceCalls();
-        if (conferenceCalls.size() <= 0) {
+        int conferenceCallsNumber = conferenceCalls.size();
+
+        if (conferenceCallsNumber <= 0) {
             return -1;
         }
+        if (conferenceCallsNumber > 1) {
+           throw new IllegalStateException(String.format("%s conference calls are in progress, 1 expected. Unable to proceed.",
+                   conferenceCallsNumber));
+        }
+
         JsonNode activeConference = conferenceCalls.get(0);
         ArrayNode terminals = (ArrayNode) activeConference.get("terminals");
         ArrayNode connections = (ArrayNode) activeConference.get("connections");
@@ -687,16 +732,19 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             statistics.put("Active Conference#Conference start time", String.valueOf(new Date(conferenceStartTimestamp)));
         }
 
+        // Adding i+1 instead of i so terminals and connections are listed starting with 1, not 0
         if (terminals != null) {
             for(int i = 0; i < terminals.size(); i++) {
-                statistics.put(String.format("Active Conference#Terminal %s address", i), getJsonProperty(terminals.get(i), "address", String.class));
-                statistics.put(String.format("Active Conference#Terminal %s system", i), getJsonProperty(terminals.get(i), "systemID", String.class));
+                int terminalNumber = i + 1;
+                statistics.put(String.format("Active Conference#Terminal %s address", terminalNumber), getJsonProperty(terminals.get(i), "address", String.class));
+                statistics.put(String.format("Active Conference#Terminal %s system", terminalNumber), getJsonProperty(terminals.get(i), "systemID", String.class));
             }
         }
         if (connections != null) {
             for(int i = 0; i < connections.size(); i++) {
-                statistics.put(String.format("Active Conference#Connection %s type", i), getJsonProperty(connections.get(i), "callType", String.class));
-                statistics.put(String.format("Active Conference#Connection %s info", i), getJsonProperty(connections.get(i), "callInfo", String.class));
+                int connectionNumber = i + 1;
+                statistics.put(String.format("Active Conference#Connection %s type", connectionNumber), getJsonProperty(connections.get(i), "callType", String.class));
+                statistics.put(String.format("Active Conference#Connection %s info", connectionNumber), getJsonProperty(connections.get(i), "callInfo", String.class));
             }
         }
         Long activeConferenceStartTime = getJsonProperty(activeConference, "startTime", Long.class);
@@ -773,16 +821,19 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * {@link #disconnect()} on reboot and on {@link ResourceNotReachableException} in the
      * {@link PolycomVideoOSInterceptor} in case if the device has been rebooted externally.
      *
+     * Response code is handled by {@link com.avispl.symphony.dal.communicator.HttpCommunicator} so there's no
+     * need for an additional status code check for validation, so if doPost request has succeeded - we can reset
+     * the sessionId and call disconnect()
+     *
      * @throws Exception during http communication
      */
     private void reboot() throws Exception {
         ObjectNode rebootRequest = JsonNodeFactory.instance.objectNode();
         rebootRequest.put("action", "reboot");
-        boolean success = doPost(REBOOT, rebootRequest).getStatusCode().is2xxSuccessful();
-        if (success) {
-            sessionId = null;
-            disconnect();
-        }
+        doPost(REBOOT, rebootRequest);
+
+        sessionId = null;
+        disconnect();
     }
 
     /**
@@ -950,16 +1001,20 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
     /**
      * Retrieve the json property and return it if it exists.
-     * Return blank json object node otherwise
+     * Return null otherwise
      *
      * @param json     to fetch property value from
      * @param property name of the property to retrieve
      * @param type     type to resolve property to, to avoid unsafe use of .asType calls for JsonNode instance.
      * @return JsonNode with an expected value or blank node otherwise
-     * @throws IllegalArgumentException if there's no matching case for the type parameter passed
+     * @throws IllegalArgumentException if the passed JSON argument is null or
+     *                                  if there's no matching case for the type parameter passed
      */
     @SuppressWarnings("unchecked")
     private <T> T getJsonProperty(JsonNode json, String property, Class<T> type) {
+        if (json == null) {
+            throw new IllegalArgumentException("JSON argument cannot be null.");
+        }
         JsonNode value = json.get(property);
         if (value == null) {
             if (logger.isDebugEnabled()) {
@@ -1133,6 +1188,6 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @return boolean value indicating whether the cooldown has ended or not
      */
     private boolean isValidControlCoolDown() {
-        return (System.currentTimeMillis() - latestControlTimestamp) < 5000;
+        return (System.currentTimeMillis() - latestControlTimestamp) < CONTROL_OPERATION_COOLDOWN_MS;
     }
 }
