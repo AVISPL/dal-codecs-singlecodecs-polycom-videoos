@@ -112,7 +112,8 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private static final String CONTROL_AUDIO_VOLUME = "Audio Volume";
     private static final String CONTROL_REBOOT = "Reboot";
 
-    /** A number of attempts to perform for getting the conference (call) status while performing
+    /**
+     * A number of attempts to perform for getting the conference (call) status while performing
      * {@link #dial(DialDevice)} operation
      */
     private static final int MAX_STATUS_POLL_ATTEMPT = 5;
@@ -466,11 +467,11 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * Set local video feed mute status
      * When operation is succeeded - we need to update {@link #localStatistics} with the new state of the
      * controllable property.
-     * When operation has failed - RuntimeException is thrown, containing the reason of an unsuccessful operation,
-     * according to the {@link #VIDEO_MUTE} response body model:
+     * When operation has failed - RuntimeException is thrown, containing the reason of an unsuccessful operation, if
+     * available, according to the {@link #VIDEO_MUTE} response body model:
      *    {
      *    "success": boolean,
-     *    "reason": “string”
+     *    "reason": "string"
      *    }
      *
      *
