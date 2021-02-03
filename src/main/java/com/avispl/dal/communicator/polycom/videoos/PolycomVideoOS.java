@@ -172,9 +172,11 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * VideoOS Rest API will add the participant as another connection for the existing conference call, without
      * creating an additional conference call, so it is commonly expected that there's a single conference at most.
      *
-     * After sending dial command we fetch for the status of the new conference call.
-     * If we can't verify (via matching of the dialString (of the DialDevice) to the remoteAddress
-     * (of the call stats returned from the device) null is returned, if both have matched then the call id is returned.
+     * After sending dial command we fetch for the status of the new conference call using the device connection
+     * url that's being returned by the VideoOS API.
+     *
+     * @throws RuntimeException If we can't verify (via matching of the dialString (of the DialDevice) to the remoteAddress
+     * (of the call stats returned from the device)
      */
     @Override
     public String dial(DialDevice dialDevice) throws Exception {
@@ -211,7 +213,8 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             }
             Thread.sleep(1000);
         }
-        return null;
+        throw new RuntimeException(String.format("An error occurred during dialing out to %s with protocol %s.",
+                dialDevice.getDialString(), dialDevice.getProtocol()));
     }
 
     /**
