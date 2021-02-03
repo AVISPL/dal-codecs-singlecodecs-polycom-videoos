@@ -19,5 +19,5 @@ jobs:
       run: echo "::set-output name=file::$(ls target/symphony-dal-communicator-polycom-videoos-[0-9].[0-9].[0-9].jar)"
     - uses: actions/upload-artifact@v1
       with:
-        name: middleatlantic
+        name: PolycomVideoOS
         path: ${{ steps.getfilename.outputs.file }}
