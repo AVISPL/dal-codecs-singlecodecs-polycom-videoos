@@ -698,11 +698,12 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             // tech acronyms are all capitals (so SIP won't become Sip, P2P won't become P2p etc.)
             // the set of such substrings is quite limited, given the context and it is only done for
             // readability purposes
-            if (arr[i].equals("sip") || arr[i].equals("h323") || arr[i].equals("p2p")) {
-                sb.append(arr[i].toUpperCase());
+            String current = arr[i];
+            if (current.equals("sip") || current.equals("h323") || current.equals("p2p")) {
+                sb.append(current.toUpperCase());
             } else {
-                sb.append(Character.toUpperCase(arr[i].charAt(0)))
-                        .append(arr[i].substring(1));
+                sb.append(Character.toUpperCase(current.charAt(0)))
+                        .append(current.substring(1));
             }
         }
         return sb.toString().trim();
@@ -721,28 +722,24 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         long uptimeSeconds = Math.round(Float.parseFloat(uptime));
         StringBuilder normalizedUptime = new StringBuilder();
 
-        long days = TimeUnit.SECONDS.toDays(uptimeSeconds);
+        long seconds = uptimeSeconds % 60;
+        long minutes = uptimeSeconds % 3600 / 60;
+        long hours = uptimeSeconds % 86400 / 3600;
+        long days = uptimeSeconds / 86400;
+
         if (days > 0) {
             normalizedUptime.append(days).append(" day(s) ");
         }
-        // Calculating a difference between the total value in seconds and number of full days retrieved
-        // remainder is calculated further in the similar manner
-        long remainder = (int) (uptimeSeconds - TimeUnit.DAYS.toSeconds(days));
-        long hours = TimeUnit.SECONDS.toHours(remainder);
         if (hours > 0) {
             normalizedUptime.append(hours).append(" hour(s) ");
         }
-        remainder = remainder - TimeUnit.HOURS.toSeconds(hours);
-        long mins = TimeUnit.SECONDS.toMinutes(remainder);
-        if (mins > 0) {
-            normalizedUptime.append(mins).append(" minute(s) ");
+        if (minutes > 0) {
+            normalizedUptime.append(minutes).append(" minute(s) ");
         }
-        remainder = remainder - TimeUnit.MINUTES.toSeconds(mins);
-        long secs = remainder;
-        if (secs > 0) {
-            normalizedUptime.append(secs).append(" second(s)");
+        if (seconds > 0) {
+            normalizedUptime.append(seconds).append(" second(s)");
         }
-        return normalizedUptime.toString();
+        return normalizedUptime.toString().trim();
     }
     /**
      * Retrieve the current state of the collaboration session
