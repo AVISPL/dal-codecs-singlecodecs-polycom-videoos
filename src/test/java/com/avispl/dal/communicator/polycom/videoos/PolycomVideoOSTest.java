@@ -94,75 +94,66 @@ public class PolycomVideoOSTest {
 
     @Test
     public void testMuteUnmuteMicrophones() throws Exception {
-        if(polycomVideoOS.retrieveCallStatus("0").getCallStatusState().equals(CallStatus.CallStatusState.Disconnected)){
-            fail("The conference has to be in progress");
-        }
         polycomVideoOS.getMultipleStatistics();
         if(polycomVideoOS.retrieveMuteStatus().equals(MuteStatus.Muted)) {
             ControllableProperty controllableProperty = new ControllableProperty();
-            controllableProperty.setProperty("Mute Microphones");
+            controllableProperty.setProperty("MuteMicrophones");
             controllableProperty.setValue("0");
             polycomVideoOS.controlProperty(controllableProperty);
             Assert.isTrue(((ExtendedStatistics)polycomVideoOS.getMultipleStatistics().get(0)).getControllableProperties().stream()
-                    .filter(advancedControllableProperty -> advancedControllableProperty.getName().equals("Mute Microphones")).findFirst()
+                    .filter(advancedControllableProperty -> advancedControllableProperty.getName().equals("MuteMicrophones")).findFirst()
                     .get().getValue().equals("0"), "Mute Microphones control must be 0!");
         } else {
             ControllableProperty controllableProperty = new ControllableProperty();
-            controllableProperty.setProperty("Mute Microphones");
+            controllableProperty.setProperty("MuteMicrophones");
             controllableProperty.setValue("1");
             polycomVideoOS.controlProperty(controllableProperty);
             Assert.isTrue(((ExtendedStatistics)polycomVideoOS.getMultipleStatistics().get(0)).getControllableProperties().stream()
-                    .filter(advancedControllableProperty -> advancedControllableProperty.getName().equals("Mute Microphones")).findFirst()
+                    .filter(advancedControllableProperty -> advancedControllableProperty.getName().equals("MuteMicrophones")).findFirst()
                     .get().getValue().equals("1"), "Mute Microphones control must be 1!");
         }
     }
 
     @Test
     public void testMuteUnmuteLocalVideo() throws Exception {
-        if(polycomVideoOS.retrieveCallStatus("0").getCallStatusState().equals(CallStatus.CallStatusState.Disconnected)){
-            fail("The conference has to be in progress");
-        }
-        ExtendedStatistics extendedStatistics = (ExtendedStatistics) polycomVideoOS.getMultipleStatistics();
+        ExtendedStatistics extendedStatistics = (ExtendedStatistics) polycomVideoOS.getMultipleStatistics().get(0);
 
         if(extendedStatistics.getControllableProperties().stream()
-                .filter(advancedControllableProperty -> advancedControllableProperty.getName().equals("Mute Local Video")).findFirst()
+                .filter(advancedControllableProperty -> advancedControllableProperty.getName().equals("MuteLocalVideo")).findFirst()
                 .get().getValue().equals("1")) {
             ControllableProperty controllableProperty = new ControllableProperty();
-            controllableProperty.setProperty("Mute Local Video");
+            controllableProperty.setProperty("MuteLocalVideo");
             controllableProperty.setValue("0");
             polycomVideoOS.controlProperty(controllableProperty);
             Assert.isTrue(((ExtendedStatistics)polycomVideoOS.getMultipleStatistics().get(0)).getControllableProperties().stream()
-                    .filter(advancedControllableProperty -> advancedControllableProperty.getName().equals("Mute Local Video")).findFirst()
+                    .filter(advancedControllableProperty -> advancedControllableProperty.getName().equals("MuteLocalVideo")).findFirst()
                     .get().getValue().equals("0"), "Mute Local Video control must be 0!");
         } else {
             ControllableProperty controllableProperty = new ControllableProperty();
-            controllableProperty.setProperty("Mute Local Video");
+            controllableProperty.setProperty("MuteLocalVideo");
             controllableProperty.setValue("1");
             polycomVideoOS.controlProperty(controllableProperty);
             Assert.isTrue(((ExtendedStatistics)polycomVideoOS.getMultipleStatistics().get(0)).getControllableProperties().stream()
-                    .filter(advancedControllableProperty -> advancedControllableProperty.getName().equals("Mute Local Video")).findFirst()
+                    .filter(advancedControllableProperty -> advancedControllableProperty.getName().equals("MuteLocalVideo")).findFirst()
                     .get().getValue().equals("1"), "Mute Local Video control must be 1!");
         }
     }
 
     @Test
     public void testVolumeChange() throws Exception {
-        if(polycomVideoOS.retrieveCallStatus("0").getCallStatusState().equals(CallStatus.CallStatusState.Disconnected)){
-            fail("The conference has to be in progress");
-        }
         polycomVideoOS.getMultipleStatistics();
         ControllableProperty controllableProperty = new ControllableProperty();
-        controllableProperty.setProperty("Audio Volume");
+        controllableProperty.setProperty("AudioVolume");
         controllableProperty.setValue("50");
         polycomVideoOS.controlProperty(controllableProperty);
         Assert.isTrue(((ExtendedStatistics)polycomVideoOS.getMultipleStatistics().get(0)).getControllableProperties().stream()
-                .filter(advancedControllableProperty -> advancedControllableProperty.getName().equals("Audio Volume")).findFirst()
+                .filter(advancedControllableProperty -> advancedControllableProperty.getName().equals("AudioVolume")).findFirst()
                 .get().getValue().equals("50"), "Audio Volume control must be 50!");
 
         controllableProperty.setValue("70");
         polycomVideoOS.controlProperty(controllableProperty);
         Assert.isTrue(((ExtendedStatistics)polycomVideoOS.getMultipleStatistics().get(0)).getControllableProperties().stream()
-                .filter(advancedControllableProperty -> advancedControllableProperty.getName().equals("Audio Volume")).findFirst()
+                .filter(advancedControllableProperty -> advancedControllableProperty.getName().equals("AudioVolume")).findFirst()
                 .get().getValue().equals("70"), "Audio Volume control must be 50!");
     }
 }

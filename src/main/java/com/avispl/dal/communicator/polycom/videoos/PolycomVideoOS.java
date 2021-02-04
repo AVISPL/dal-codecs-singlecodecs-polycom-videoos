@@ -33,6 +33,7 @@ import javax.security.auth.login.FailedLoginException;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.stream.IntStream;
 
 /**
  * PolycomVideoOS is a communicator class for X30/X50/G7500 devices.
@@ -88,6 +89,40 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
     }
 
+    private static final String SYSTEM_STATUS_GROUP_LABEL = "SystemStatus#";
+    private static final String COLLABORATION_SESSION_STATE_LABEL = "Collaboration#SessionState";
+    private static final String COLLABORATION_SESSION_ID_LABEL = "Collaboration#SessionId";
+    private static final String ACTIVE_CONFERENCE_ID_LABEL = "ActiveConference#ConferenceId";
+    private static final String ACTIVE_CONFERENCE_START_TIME_LABEL = "ActiveConference#ConferenceStartTime";
+    private static final String ACTIVE_CONFERENCE_TERMINAL_ADDRESS_LABEL = "ActiveConference#Terminal%sAddress";
+    private static final String ACTIVE_CONFERENCE_TERMINAL_SYSTEM_LABEL = "ActiveConference#Terminal%sSystem";
+    private static final String ACTIVE_CONFERENCE_CONNECTION_TYPE_LABEL = "ActiveConference#Connection%sType";
+    private static final String ACTIVE_CONFERENCE_CONNECTION_INFO_LABEL = "ActiveConference#Connection%sInfo";
+    private static final String APPLICATIONS_VERSION_LABEL = "Applications#%sVersion";
+    private static final String APPLICATIONS_LAST_UPDATED_LABEL = "Applications#%SLastUpdated";
+    private static final String MICROPHONES_NAME_LABEL = "Microphones#Microphone%sName";
+    private static final String MICROPHONES_STATUS_LABEL = "Microphones#Microphone%sState";
+    private static final String MICROPHONES_TYPE_LABEL = "Microphones#Microphone%sType";
+    private static final String MICROPHONES_HARDWARE_LABEL = "Microphones#Microphone%sHardwareVersion";
+    private static final String MICROPHONES_SOFTWARE_LABEL = "Microphones#Microphone%sSoftwareVersion";
+    private static final String MICROPHONES_MUTE_LABEL = "Microphones#Microphone%sMuted";
+    private static final String CAMERAS_CONTENT_STATUS = "Cameras#ContentStatus";
+    private static final String CONFERENCING_CAPABILITIES_BLAST_DIAL = "ConferencingCapabilities#BlastDial";
+    private static final String CONFERENCING_CAPABILITIES_AUDIO_CALL = "ConferencingCapabilities#AudioCall";
+    private static final String CONFERENCING_CAPABILITIES_VIDEO_CALL = "ConferencingCapabilities#VideoCall";
+    private static final String AUDIO_MUTE_LOCKED_LABEL = "Audio#MuteLocked";
+    private static final String AUDIO_MICROPHONES_CONNECTED = "Audio#MicrophonesConnected";
+    private static final String ACTIVE_SESSIONS_USER_ID_LABEL = "ActiveSessions#Session%sUserId";
+    private static final String ACTIVE_SESSIONS_ROLE_LABEL = "ActiveSessions#Session%sRole";
+    private static final String ACTIVE_SESSIONS_LOCATION_LABEL = "ActiveSessions#Session%sLocation";
+    private static final String ACTIVE_SESSIONS_CLIENT_TYPE_LABEL = "ActiveSessions#Session%sClientType";
+    private static final String ACTIVE_SESSIONS_STATUS_LABEL = "ActiveSessions#Session%sStatus";
+    private static final String CONTROL_MUTE_VIDEO = "MuteLocalVideo";
+    private static final String CONTROL_MUTE_MICROPHONES = "MuteMicrophones";
+    private static final String CONTROL_AUDIO_VOLUME = "AudioVolume";
+    private static final String CONTROL_REBOOT = "Reboot";
+
+
     private static final String SESSION = "rest/current/session";
     private static final String STATUS = "rest/system/status";
     private static final String CONFERENCING_CAPABILITIES = "rest/conferences/capabilities";
@@ -106,11 +141,6 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private static final String MICROPHONES = "rest/audio/microphones";
     private static final String APPS = "rest/system/apps";
     private static final String SESSIONS = "rest/current/session/sessions";
-
-    private static final String CONTROL_MUTE_VIDEO = "Mute Local Video";
-    private static final String CONTROL_MUTE_MICROPHONES = "Mute Microphones";
-    private static final String CONTROL_AUDIO_VOLUME = "Audio Volume";
-    private static final String CONTROL_REBOOT = "Reboot";
 
     /**
      * A number of attempts to perform for getting the conference (call) status while performing
@@ -642,21 +672,39 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             ArrayNode stateList = getJsonProperty(jsonNode, "stateList", ArrayNode.class);
 
             if (langtag != null && stateList != null) {
-                statistics.put("System Status#" + normalizeStringPropertyName(
+                statistics.put(SYSTEM_STATUS_GROUP_LABEL + normalizePropertyLabel(
                         langtag.replaceAll("_", " ")),
-                        stateList.get(0).asText().replaceAll("_", " ").toUpperCase());
+                        stateList.get(0).asText().replaceAll("_", " "));
             }
         });
     }
 
     /**
-     * Change property name to start with a capital letter
+     * We need to normalize labels like "Word word word word" to "WordWordWordWord"
+     * i.e pascal case. At some specific situations, properties names are taken from the device,
+     * rather than statically defined in a device adapter.
      *
-     * @param string parameter name
-     * @return {@link String} property name with first capital letter
+     * @param string given label
+     * @return normalized {@link String}
      */
-    private String normalizeStringPropertyName(String string) {
-        return string.substring(0, 1).toUpperCase() + string.substring(1).toLowerCase();
+    private String normalizePropertyLabel(String string) {
+        String[] arr = string.toLowerCase().split(" ");
+        StringBuilder sb = new StringBuilder();
+
+        for (int i = 0; i < arr.length; i++) {
+            // There's a lot of parameters that use this normalizer, but some parameters may have
+            // these substrings, so in order to have them prettified properly on frontend -
+            // tech acronyms are all capitals (so SIP won't become Sip, P2P won't become P2p etc.)
+            // the set of such substrings is quite limited, given the context and it is only done for
+            // readability purposes
+            if (arr[i].equals("sip") || arr[i].equals("h323") || arr[i].equals("p2p")) {
+                sb.append(arr[i].toUpperCase());
+            } else {
+                sb.append(Character.toUpperCase(arr[i].charAt(0)))
+                        .append(arr[i].substring(1));
+            }
+        }
+        return sb.toString().trim();
     }
 
     /**
@@ -669,9 +717,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         JsonNode response = doGet(COLLABORATION, JsonNode.class);
         if (!response.isNull()) {
             String sessionState = getJsonProperty(response, "state", String.class);
-            statistics.put("Collaboration#Session State", sessionState);
+            statistics.put(COLLABORATION_SESSION_STATE_LABEL, sessionState);
             if ("ACTIVE".equals(sessionState)) {
-                statistics.put("Collaboration#Session ID", getJsonProperty(response, "id", String.class));
+                statistics.put(COLLABORATION_SESSION_ID_LABEL, getJsonProperty(response, "id", String.class));
             }
         }
     }
@@ -730,30 +778,26 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         ArrayNode terminals = (ArrayNode) activeConference.get("terminals");
         ArrayNode connections = (ArrayNode) activeConference.get("connections");
 
-        statistics.put("Active Conference#Conference ID", getJsonProperty(activeConference, "id", String.class));
+        statistics.put(ACTIVE_CONFERENCE_ID_LABEL, getJsonProperty(activeConference, "id", String.class));
         Long conferenceStartTimestamp = getJsonProperty(activeConference, "startTime", Long.class);
         if(null != conferenceStartTimestamp) {
-            statistics.put("Active Conference#Conference start time", String.valueOf(new Date(conferenceStartTimestamp)));
+            statistics.put(ACTIVE_CONFERENCE_START_TIME_LABEL, String.valueOf(new Date(conferenceStartTimestamp)));
         }
 
         // Adding i+1 instead of i so terminals and connections are listed starting with 1, not 0
         if (terminals != null) {
             for(int i = 0; i < terminals.size(); i++) {
                 int terminalNumber = i + 1;
-                statistics.put(String.format("Active Conference#Terminal %s address", terminalNumber), getJsonProperty(terminals.get(i), "address", String.class));
-                statistics.put(String.format("Active Conference#Terminal %s system", terminalNumber), getJsonProperty(terminals.get(i), "systemID", String.class));
+                statistics.put(String.format(ACTIVE_CONFERENCE_TERMINAL_ADDRESS_LABEL, terminalNumber), getJsonProperty(terminals.get(i), "address", String.class));
+                statistics.put(String.format(ACTIVE_CONFERENCE_TERMINAL_SYSTEM_LABEL, terminalNumber), getJsonProperty(terminals.get(i), "systemID", String.class));
             }
         }
         if (connections != null) {
             for(int i = 0; i < connections.size(); i++) {
                 int connectionNumber = i + 1;
-                statistics.put(String.format("Active Conference#Connection %s type", connectionNumber), getJsonProperty(connections.get(i), "callType", String.class));
-                statistics.put(String.format("Active Conference#Connection %s info", connectionNumber), getJsonProperty(connections.get(i), "callInfo", String.class));
+                statistics.put(String.format(ACTIVE_CONFERENCE_CONNECTION_TYPE_LABEL, connectionNumber), getJsonProperty(connections.get(i), "callType", String.class));
+                statistics.put(String.format(ACTIVE_CONFERENCE_CONNECTION_INFO_LABEL, connectionNumber), getJsonProperty(connections.get(i), "callInfo", String.class));
             }
-        }
-        Long activeConferenceStartTime = getJsonProperty(activeConference, "startTime", Long.class);
-        if (activeConferenceStartTime != null) {
-            statistics.put("Active Conference#Conference start time", new Date(activeConferenceStartTime).toString());
         }
         return getJsonProperty(activeConference, "id", Integer.class);
     }
@@ -884,12 +928,12 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
         applications.forEach(jsonNode -> {
             String appName = getJsonProperty(jsonNode, "appName", String.class);
-            statistics.put("Applications#" + appName + " Version",
+            statistics.put(String.format(APPLICATIONS_VERSION_LABEL, appName),
                     getJsonProperty(jsonNode, "versionInfo", String.class));
 
             Long lastUpdatedOn = getJsonProperty(jsonNode, "lastUpdatedOn", Long.class);
             if (lastUpdatedOn != null) {
-                statistics.put("Applications#" + appName + " Last Updated",
+                statistics.put(String.format(APPLICATIONS_LAST_UPDATED_LABEL, appName),
                         new Date(lastUpdatedOn).toString());
             }
         });
@@ -907,13 +951,17 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         if (sessionList == null) {
             return;
         }
-        sessionList.forEach(jsonNode -> {
+
+        IntStream.range(1, sessionList.size()).forEach(index -> {
+            JsonNode jsonNode = sessionList.get(index - 1);
             Boolean isConnected = getJsonProperty(jsonNode, "isConnected", Boolean.class);
             Boolean isAuthenticated = getJsonProperty(jsonNode, "isAuthenticated", Boolean.class);
 
-            statistics.put(String.format("Active Sessions#%s : %s : %s(%s)", getJsonProperty(jsonNode, "userId", String.class),
-                    getJsonProperty(jsonNode, "role", String.class), getJsonProperty(jsonNode, "location", String.class),
-                    getJsonProperty(jsonNode, "clientType", String.class)),
+            statistics.put(String.format(ACTIVE_SESSIONS_USER_ID_LABEL, index), getJsonProperty(jsonNode, "userId", String.class));
+            statistics.put(String.format(ACTIVE_SESSIONS_ROLE_LABEL, index), getJsonProperty(jsonNode, "role", String.class));
+            statistics.put(String.format(ACTIVE_SESSIONS_LOCATION_LABEL, index), getJsonProperty(jsonNode, "location", String.class));
+            statistics.put(String.format(ACTIVE_SESSIONS_CLIENT_TYPE_LABEL, index), getJsonProperty(jsonNode, "clientType", String.class));
+            statistics.put(String.format(ACTIVE_SESSIONS_STATUS_LABEL, index),
                     String.format("%s, %s", ((isConnected == null ? false : isConnected) ? "CONNECTED" : "NOT CONNECTED"),
                             ((isAuthenticated == null ? false : isAuthenticated) ? "AUTHENTICATED" : "NOT AUTHENTICATED")));
         });
@@ -935,17 +983,17 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
         response.forEach(jsonNode -> {
             String microphoneOrderingNumber = getJsonProperty(jsonNode, "number", String.class);
-            statistics.put(String.format("Microphones#Microphone %s Name", microphoneOrderingNumber),
+            statistics.put(String.format(MICROPHONES_NAME_LABEL, microphoneOrderingNumber),
                     getJsonProperty(jsonNode, "typeInString", String.class));
-            statistics.put(String.format("Microphones#Microphone %s State", microphoneOrderingNumber),
+            statistics.put(String.format(MICROPHONES_STATUS_LABEL, microphoneOrderingNumber),
                     getJsonProperty(jsonNode, "state", String.class));
-            statistics.put(String.format("Microphones#Microphone %s Type", microphoneOrderingNumber),
+            statistics.put(String.format(MICROPHONES_TYPE_LABEL, microphoneOrderingNumber),
                     getJsonProperty(jsonNode, "type", String.class));
-            statistics.put(String.format("Microphones#Microphone %s HW Version", microphoneOrderingNumber),
+            statistics.put(String.format(MICROPHONES_HARDWARE_LABEL, microphoneOrderingNumber),
                     getJsonProperty(jsonNode, "hwVersion", String.class));
-            statistics.put(String.format("Microphones#Microphone %s SW Version", microphoneOrderingNumber),
+            statistics.put(String.format(MICROPHONES_SOFTWARE_LABEL, microphoneOrderingNumber),
                     getJsonProperty(jsonNode, "swVersion", String.class));
-            statistics.put(String.format("Microphones#Microphone %s Mute", microphoneOrderingNumber),
+            statistics.put(String.format(MICROPHONES_MUTE_LABEL, microphoneOrderingNumber),
                     String.valueOf("0".equals(getJsonProperty(jsonNode, "mute", String.class))));
         });
     }
@@ -958,7 +1006,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      */
     private void retrieveContentStatus(Map<String, String> statistics) throws Exception {
         String response = doGet(CONTENT_STATUS, String.class);
-        statistics.put("Cameras#Content Status", response);
+        statistics.put(CAMERAS_CONTENT_STATUS, response);
     }
 
     /**
@@ -969,9 +1017,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      */
     private void retrieveConferencingCapabilities(Map<String, String> statistics) throws Exception {
         JsonNode response = doGet(CONFERENCING_CAPABILITIES, JsonNode.class);
-        statistics.put("Conferencing Capabilities#Blast Dial", response.get("canBlastDial").asBoolean() ? "Available" : "Not Available");
-        statistics.put("Conferencing Capabilities#Audio Call", response.get("canMakeAudioCall").asBoolean() ? "Available" : "Not Available");
-        statistics.put("Conferencing Capabilities#Video Call", response.get("canMakeVideoCall").asBoolean() ? "Available" : "Not Available");
+        statistics.put(CONFERENCING_CAPABILITIES_BLAST_DIAL, response.get("canBlastDial").asBoolean() ? "Available" : "Not Available");
+        statistics.put(CONFERENCING_CAPABILITIES_AUDIO_CALL, response.get("canMakeAudioCall").asBoolean() ? "Available" : "Not Available");
+        statistics.put(CONFERENCING_CAPABILITIES_VIDEO_CALL, response.get("canMakeVideoCall").asBoolean() ? "Available" : "Not Available");
     }
 
     /**
@@ -982,8 +1030,8 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      */
     private void retrieveAudioStatus(Map<String, String> statistics) throws Exception {
         JsonNode response = doGet(AUDIO, JsonNode.class);
-        statistics.put("Audio#Mute Locked", getJsonProperty(response, "muteLocked", String.class));
-        statistics.put("Audio#Microphones Connected", getJsonProperty(response, "numOfMicsConnected", String.class));
+        statistics.put(AUDIO_MUTE_LOCKED_LABEL, getJsonProperty(response, "muteLocked", String.class));
+        statistics.put(AUDIO_MICROPHONES_CONNECTED, getJsonProperty(response, "numOfMicsConnected", String.class));
     }
 
     /**
