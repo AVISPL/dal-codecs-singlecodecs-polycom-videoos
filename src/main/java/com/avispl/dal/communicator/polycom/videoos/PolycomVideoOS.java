@@ -32,6 +32,7 @@ import org.springframework.web.client.RestTemplate;
 import javax.security.auth.login.FailedLoginException;
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.IntStream;
 
@@ -708,6 +709,42 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     }
 
     /**
+     * Uptime is received in seconds, need to normalize it and make it human readable, like
+     * 1 day(s) 5 hour(s) 12 minute(s) 55 minute(s)
+     * Incoming parameter is may have a decimal point, so in order to safely process this - it's rounded first.
+     * We don't need to add a segment of time if it's 0.
+     *
+     * @param uptime value, with a decimal point
+     * @return string value of format 'x day(s) x hour(s) x minute(s) x minute(s)'
+     */
+    private String normalizeUptime(String uptime) {
+        long uptimeSeconds = Math.round(Float.parseFloat(uptime));
+        StringBuilder normalizedUptime = new StringBuilder();
+
+        long days = TimeUnit.SECONDS.toDays(uptimeSeconds);
+        if (days > 0) {
+            normalizedUptime.append(days).append(" day(s) ");
+        }
+        // Calculating a difference between the total value in seconds and number of full days retrieved
+        // remainder is calculated further in the similar manner
+        long remainder = (int) (uptimeSeconds - TimeUnit.DAYS.toSeconds(days));
+        long hours = TimeUnit.SECONDS.toHours(remainder);
+        if (hours > 0) {
+            normalizedUptime.append(hours).append(" hour(s) ");
+        }
+        remainder = remainder - TimeUnit.HOURS.toSeconds(hours);
+        long mins = TimeUnit.SECONDS.toMinutes(remainder);
+        if (mins > 0) {
+            normalizedUptime.append(mins).append(" minute(s) ");
+        }
+        remainder = remainder - TimeUnit.MINUTES.toSeconds(mins);
+        long secs = remainder;
+        if (secs > 0) {
+            normalizedUptime.append(secs).append(" second(s)");
+        }
+        return normalizedUptime.toString();
+    }
+    /**
      * Retrieve the current state of the collaboration session
      *
      * @return Integer value of the current device volume level
@@ -899,11 +936,11 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         addStatisticsProperty(statistics, "System#Software Version", response.get("softwareVersion"));
         addStatisticsProperty(statistics, "System#System State", response.get("state"));
         addStatisticsProperty(statistics, "System#System Name", response.get("systemName"));
-        addStatisticsProperty(statistics, "System#System Uptime", response.get("uptime"));
         addStatisticsProperty(statistics, "System#System Build", response.get("build"));
         addStatisticsProperty(statistics, "System#System Reboot Needed", response.get("rebootNeeded"));
         addStatisticsProperty(statistics, "System#Device Model", response.get("model"));
         addStatisticsProperty(statistics, "System#Device Hardware Version", response.get("hardwareVersion"));
+        statistics.put( "System#System Uptime", normalizeUptime(response.get("uptime").asText()));
 
         JsonNode lanStatus = response.get("lanStatus");
         if (lanStatus == null) {
