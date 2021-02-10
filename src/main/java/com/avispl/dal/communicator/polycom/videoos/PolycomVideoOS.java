@@ -674,7 +674,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             if (langtag != null && stateList != null) {
                 statistics.put(SYSTEM_STATUS_GROUP_LABEL + normalizePropertyLabel(
                         langtag.replaceAll("_", " ")),
-                        stateList.get(0).asText().replaceAll("_", " "));
+                        stateList.get(0).asText().replaceAll("_", " ").toUpperCase());
             }
         });
     }
