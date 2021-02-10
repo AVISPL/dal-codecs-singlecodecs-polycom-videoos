@@ -671,7 +671,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             String langtag = getJsonProperty(jsonNode, "langtag", String.class);
             ArrayNode stateList = getJsonProperty(jsonNode, "stateList", ArrayNode.class);
 
-            if (langtag != null && stateList != null && stateList.size() > 0) {
+            if (langtag != null && stateList != null && !stateList.isEmpty()) {
                 statistics.put(SYSTEM_STATUS_GROUP_LABEL + normalizePropertyLabel(
                         langtag.replaceAll("_", " ")),
                         stateList.get(0).asText().replaceAll("_", " ").toUpperCase());
