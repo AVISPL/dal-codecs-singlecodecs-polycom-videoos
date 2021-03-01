@@ -148,14 +148,14 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      */
     private static final int MAX_STATUS_POLL_ATTEMPT = 5;
     /**
-     * Default call rate to use for {@link #dial(DialDevice)} operations. Retrieved from the adapter.properties file
-     */
-    private int DEFAULT_CALL_RATE;
-    /**
      * Timestamp of the last control operation, used to determine whether we need to wait
      * for {@link #CONTROL_OPERATION_COOLDOWN_MS} before collecting new statistics
      */
     private long latestControlTimestamp;
+    /**
+     * Default call rate to use for {@link #dial(DialDevice)} operations. Retrieved from the adapter.properties file
+     */
+    private int callRate = 1920;
     /**
      * Session Id used for authorization
      */
@@ -186,13 +186,17 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         setTrustAllCertificates(true);
     }
 
+    public int getCallRate() {
+        return callRate;
+    }
+
+    public void setCallRate(int CallRate) {
+        this.callRate = callRate;
+    }
+
     @Override
     protected void internalInit() throws Exception {
         super.internalInit();
-
-        Properties properties = new Properties();
-        properties.load(getClass().getResourceAsStream("/adapter.properties"));
-        DEFAULT_CALL_RATE = Integer.parseInt(properties.getProperty("defaultCallRate"));
     }
 
     /**
@@ -217,7 +221,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         Integer callSpeed = dialDevice.getCallSpeed();
 
         request.put("address", dialDevice.getDialString());
-        request.put("rate", (callSpeed != null && callSpeed > 0) ? callSpeed : DEFAULT_CALL_RATE);
+        request.put("rate", (callSpeed != null && callSpeed > 0) ? callSpeed : callRate);
 
         Protocol protocol = dialDevice.getProtocol();
         if (protocol != null) {
@@ -432,7 +436,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 CallStats callStats = new CallStats();
                 callStats.setCallId(String.valueOf(conferenceId));
                 callStats.setProtocol(statistics.get("Active Conference#Protocol"));
-                callStats.setRequestedCallRate(DEFAULT_CALL_RATE);
+                callStats.setRequestedCallRate(callRate);
 
                 AudioChannelStats audioChannelStats = new AudioChannelStats();
                 VideoChannelStats videoChannelStats = new VideoChannelStats();
