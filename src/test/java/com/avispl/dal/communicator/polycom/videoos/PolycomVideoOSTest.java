@@ -27,7 +27,7 @@ public class PolycomVideoOSTest {
         polycomVideoOS.setHost("172.31.254.150");
         polycomVideoOS.setProtocol("https");
         polycomVideoOS.setPort(443);
-        polycomVideoOS.setPassword("1234");
+        polycomVideoOS.setPassword("12345");
         polycomVideoOS.setLogin("admin");
         polycomVideoOS.init();
     }
