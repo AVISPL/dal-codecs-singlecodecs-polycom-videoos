@@ -65,27 +65,10 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 try {
                     authenticate();
                     response = execution.execute(request, body);
-                } catch (ResourceNotReachableException e) {
-                    if (e.getMessage().contains(SESSION) && !communicatorDisconnectIssued) {
-                        // In case it's been rebooted by some other resource - we need to react to that.
-                        // Normally we expect that the authorization request timeouts, since previous one failed with
-                        // a specific error code, so basically we do the same as before - authenticate + retry previous
-                        // request but with the destroy action called first, since init will be done next when
-                        // authentication is requested.
-                        try {
-                            disconnect();
-                            communicatorDisconnectIssued = true;
-                            authenticate();
-                            response = execution.execute(request, body);
-                        } catch (Exception ex) {
-                            throw new IOException("Unable to recover the http connection during the request interception: " + ex.getMessage());
-                        }
-                    }
                 } catch (Exception e) {
                     logger.error("Authentication failed during interception: " + e.getMessage());
                 }
             }
-            communicatorDisconnectIssued = false;
             return response;
         }
     }
@@ -145,8 +128,6 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * period and the control states are modified within the {@link #localStatistics} variable.
      */
     private static final int CONTROL_OPERATION_COOLDOWN_MS = 5000;
-
-    private boolean communicatorDisconnectIssued = false;
 
     private final ReentrantLock controlOperationsLock = new ReentrantLock();
     private ExtendedStatistics localStatistics;
