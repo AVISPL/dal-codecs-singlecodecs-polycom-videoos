@@ -61,22 +61,20 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         public ClientHttpResponse intercept(HttpRequest request, byte[] body, ClientHttpRequestExecution execution) throws IOException {
 
             ClientHttpResponse response = execution.execute(request, body);
-            if (response.getRawStatusCode() == 403) {
+            if (response.getRawStatusCode() == 403 && !request.getURI().getPath().endsWith(SESSION)) {
                 try {
                     authenticate();
                     response = execution.execute(request, body);
                 } catch (ResourceNotReachableException e) {
-                    if (e.getMessage().contains(SESSION)) {
-                        // In case it's been rebooted by some other resource - we need to react to that.
-                        // Normally we expect that the authorization request timeouts, since previous one failed with
-                        // a specific error code, so basically we do the same as before - authenticate + retry previous
-                        // request but with the destroy action called first, since init will be done next when
-                        // authentication is requested.
-                        try {
-                            disconnect();
-                        } catch (Exception ex) {
-                            throw new IOException("Unable to recover the http connection during the request interception: " + ex.getMessage());
-                        }
+                    // In case it's been rebooted by some other resource - we need to react to that.
+                    // Normally we expect that the authorization request timeouts, since previous one failed with
+                    // a specific error code, so basically we do the same as before - authenticate + retry previous
+                    // request but with the destroy action called first, since init will be done next when
+                    // authentication is requested.
+                    try {
+                        disconnect();
+                    } catch (Exception ex) {
+                        throw new IOException("Unable to recover the http connection during the request interception: " + ex.getMessage());
                     }
                 } catch (Exception e) {
                     logger.error("Authentication failed during interception: " + e.getMessage());
