@@ -74,7 +74,6 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                         // authentication is requested.
                         try {
                             disconnect();
-                            response = execution.execute(request, body);
                         } catch (Exception ex) {
                             throw new IOException("Unable to recover the http connection during the request interception: " + ex.getMessage());
                         }
