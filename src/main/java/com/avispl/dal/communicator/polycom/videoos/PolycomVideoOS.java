@@ -1044,7 +1044,6 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     @Override
     protected void authenticate() throws Exception {
         // authenticate and get sessionId like "PSN0HppfZap7wtV9MgTeGKLZL+q8q+65Te6g/r61KLqC26+thY"
-        sessionId = null;
         ObjectNode request = JsonNodeFactory.instance.objectNode();
         request.put("user", getLogin());
         request.put("password", getPassword());
