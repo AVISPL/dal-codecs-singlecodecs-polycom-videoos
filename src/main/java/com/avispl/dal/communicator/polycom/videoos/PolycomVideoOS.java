@@ -256,22 +256,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 if (null != conferenceId) {
                     String remoteAddress = getJsonProperty(meetingInfo, "address", String.class);
                     if (!StringUtils.isNullOrEmpty(remoteAddress) && remoteAddress.trim().equals(dialDevice.getDialString().trim())) {
-                        Map<String, String> statistics;
-                        if (localStatistics == null) {
-                            statistics = new HashMap<>();
-                            retrieveCommunicationProtocolsInfo(statistics);
-                        } else {
-                            statistics = localStatistics.getStatistics();
-                        }
-
-                        String localAddress = statistics.get(SYSTEM_NAME_LABEL);
-                        if (protocol == Protocol.SIP) {
-                            localAddress = statistics.get(SYSTEM_SIP_USERNAME_LABEL);
-                        } else if (protocol == Protocol.H323) {
-                            localAddress = statistics.get(SYSTEM_H323_EXTENSION_LABEL);
-                        }
-
-                        return String.format("%s:%s", conferenceId, localAddress);
+                        return String.format("%s:%s", conferenceId, retrieveCallId());
                     }
                 }
             }
@@ -281,6 +266,29 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 dialDevice.getDialString(), dialDevice.getProtocol()));
     }
 
+    /**
+     * Retrieve formatted callId based on the existing statistics data
+     *
+     * @return {@link String} value of the callId in a format "conferenceId:dialString" e.g "0:nh-studiox30@nh.vnoc1.com"
+     * */
+    private String retrieveCallId () throws Exception {
+        Map<String, String> statistics;
+        if (localStatistics == null) {
+            statistics = new HashMap<>();
+            retrieveCommunicationProtocolsInfo(statistics);
+        } else {
+            statistics = localStatistics.getStatistics();
+        }
+
+        String localAddress = statistics.get(SYSTEM_NAME_LABEL);
+        if (statistics.containsKey(SYSTEM_SIP_USERNAME_LABEL)) {
+            localAddress = statistics.get(SYSTEM_SIP_USERNAME_LABEL);
+        } else if (statistics.containsKey(SYSTEM_H323_EXTENSION_LABEL)) {
+            localAddress = statistics.get(SYSTEM_H323_EXTENSION_LABEL);
+        }
+
+        return localAddress;
+    }
     /**
      * {@inheritDoc}
      * <p>
@@ -473,8 +481,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             endpointStatistics.setInCall(validConferenceId);
             if (validConferenceId) {
                 CallStats callStats = new CallStats();
-                callStats.setCallId(String.valueOf(conferenceId));
-                callStats.setProtocol(statistics.get("Active Conference#Protocol"));
+                callStats.setProtocol(statistics.get("ActiveConference#Connection1Type"));
                 callStats.setRequestedCallRate(DEFAULT_CALL_RATE);
 
                 AudioChannelStats audioChannelStats = new AudioChannelStats();
@@ -485,6 +492,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 processConferenceCallMediaStats(conferenceCallMediaStats, audioChannelStats, videoChannelStats, callStats);
                 retrieveSharedMediaStats(contentChannelStats);
 
+                callStats.setCallId(String.format("%s:%s", conferenceId, retrieveCallId()));
                 endpointStatistics.setCallStats(callStats);
                 endpointStatistics.setAudioChannelStats(audioChannelStats);
                 endpointStatistics.setVideoChannelStats(videoChannelStats);
