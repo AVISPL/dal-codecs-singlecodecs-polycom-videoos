@@ -49,7 +49,7 @@ jobs:
     - name: PMD check
       run: mvn pmd:check
     - id: getfilename
-      run: echo "::set-output name=file::$(ls target/symphony-dal-communicator-polycom-trio-${{ needs.versiongenerate.outputs.version }}.jar)"
+      run: echo "::set-output name=file::$(ls target/symphony-dal-communicator-polycom-videoos-${{ needs.versiongenerate.outputs.version }}.jar)"
     - uses: actions/upload-artifact@v1
       with:
         name: PolycomVideoOS
