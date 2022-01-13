@@ -75,14 +75,14 @@ public class PolycomVideoOSTest {
         DialDevice dialDevice = new DialDevice();
         dialDevice.setProtocol(Protocol.SIP);
         dialDevice.setCallSpeed(320);
-        dialDevice.setDialString("2149695280@zoomcrc.com");
+        dialDevice.setDialString("1125198839@vtc.avispl.com");
         String conferenceId = polycomVideoOS.dial(dialDevice);
         Assert.notNull(conferenceId, "ConferenceId must not be nul");
     }
 
     @Test
     public void testCallStatus() throws Exception {
-        CallStatus status = polycomVideoOS.retrieveCallStatus("0:nh-studiox30@nh.vnoc1.com");
+        CallStatus status = polycomVideoOS.retrieveCallStatus("conferences/0/connections/2");
         Assert.notNull(status, "Status should be present");
     }
 
