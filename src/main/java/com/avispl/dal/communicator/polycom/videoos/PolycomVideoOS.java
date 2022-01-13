@@ -52,6 +52,70 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private ClientHttpRequestInterceptor videoOSInterceptor = new PolycomVideoOSInterceptor();
 
     /**
+     * Data transfer unit for keeping the conference data - conferenceId, callId and startDate,
+     * to further use in callId creation process
+     */
+    static class CallConnectionData {
+        private Integer conferenceId = -1;
+        private Integer callId = -1;
+        private Long startDate = -1L;
+
+        /**
+         * Retrieves {@code {@link #conferenceId}}
+         *
+         * @return value of {@link #conferenceId}
+         */
+        public Integer getConferenceId() {
+            return conferenceId;
+        }
+
+        /**
+         * Sets {@code conferenceId}
+         *
+         * @param conferenceId the {@code java.lang.Integer} field
+         */
+        public void setConferenceId(Integer conferenceId) {
+            this.conferenceId = conferenceId;
+        }
+
+        /**
+         * Retrieves {@code {@link #callId}}
+         *
+         * @return value of {@link #callId}
+         */
+        public Integer getCallId() {
+            return callId;
+        }
+
+        /**
+         * Sets {@code callId}
+         *
+         * @param callId the {@code java.lang.Integer} field
+         */
+        public void setConnectionId(Integer callId) {
+            this.callId = callId;
+        }
+
+        /**
+         * Retrieves {@code {@link #startDate}}
+         *
+         * @return value of {@link #startDate}
+         */
+        public Long getStartDate() {
+            return startDate;
+        }
+
+        /**
+         * Sets {@code startDate}
+         *
+         * @param startDate the {@code java.lang.Long} field
+         */
+        public void setStartDate(Long startDate) {
+            this.startDate = startDate;
+        }
+    }
+
+    /**
      * Interceptor for RestTemplate that injects
      * <p>
      * Currently, a reboot action changes previously accepted certificates, which would lead to
@@ -253,10 +317,12 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             JsonNode meetingInfo = doGet(meetingInfoUrl, JsonNode.class);
             if (meetingInfo != null) {
                 String conferenceId = getJsonProperty(meetingInfo, "parentConfId", String.class);
+                String connectionId = getJsonProperty(meetingInfo, "id", String.class);
+                String startTime = getJsonProperty(meetingInfo, "startTime", String.class);
                 if (null != conferenceId) {
                     String remoteAddress = getJsonProperty(meetingInfo, "address", String.class);
                     if (!StringUtils.isNullOrEmpty(remoteAddress) && remoteAddress.trim().equals(dialDevice.getDialString().trim())) {
-                        return String.format("%s:%s", conferenceId, retrieveCallId());
+                        return String.format("%s:%s:%s", conferenceId, connectionId, startTime);
                     }
                 }
             }
@@ -338,7 +404,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
         controlOperationsLock.lock();
         try {
-            Pattern pattern = Pattern.compile("(\\d+):.+?$", Pattern.CASE_INSENSITIVE);
+            Pattern pattern = Pattern.compile("(\\d+):/(\\d+):\\d+$", Pattern.CASE_INSENSITIVE);
             Matcher matcher = pattern.matcher(conferenceId);
             if (!StringUtils.isNullOrEmpty(conferenceId) && matcher.find()) {
                 JsonNode response = doGet(String.format(CONFERENCE, matcher.group(1)), JsonNode.class);
@@ -347,7 +413,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 }
                 Boolean conferenceIsActive = getJsonProperty(response, "isActive", Boolean.class);
                 if (conferenceIsActive != null && conferenceIsActive) {
-                    return generateCallStatus(getJsonProperty(response, "id", String.class), CallStatus.CallStatusState.Connected);
+                    return generateCallStatus(conferenceId, CallStatus.CallStatusState.Connected);
                 }
             } else {
                 ArrayNode conferenceCalls = listConferenceCalls();
@@ -475,7 +541,8 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             extendedStatistics.setStatistics(statistics);
             extendedStatistics.setControllableProperties(controls);
 
-            Integer conferenceId = retrieveActiveConferenceCallStatistics(statistics);
+            CallConnectionData connectionData = retrieveActiveConferenceCallStatistics(statistics);
+            Integer conferenceId = connectionData.getConferenceId();
             boolean validConferenceId = conferenceId != null && conferenceId > -1;
 
             endpointStatistics.setInCall(validConferenceId);
@@ -492,7 +559,10 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 processConferenceCallMediaStats(conferenceCallMediaStats, audioChannelStats, videoChannelStats, callStats);
                 retrieveSharedMediaStats(contentChannelStats);
 
-                callStats.setCallId(String.format("%s:%s", conferenceId, retrieveCallId()));
+                String remoteAddress = retrieveCallId();
+                callStats.setCallId(String.format("%s:%s:%s", conferenceId, connectionData.getCallId(), connectionData.getStartDate()));
+                callStats.setRemoteAddress(remoteAddress);
+
                 endpointStatistics.setCallStats(callStats);
                 endpointStatistics.setAudioChannelStats(audioChannelStats);
                 endpointStatistics.setVideoChannelStats(videoChannelStats);
@@ -846,12 +916,13 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws IllegalStateException if more than 1 active conference was found
      * @throws Exception             if any other error has occurred
      */
-    private Integer retrieveActiveConferenceCallStatistics(Map<String, String> statistics) throws Exception {
+    private CallConnectionData retrieveActiveConferenceCallStatistics(Map<String, String> statistics) throws Exception {
+        CallConnectionData callConnectionData = new CallConnectionData();
         ArrayNode conferenceCalls = listConferenceCalls();
         int conferenceCallsNumber = conferenceCalls.size();
 
         if (conferenceCallsNumber <= 0) {
-            return -1;
+            return callConnectionData;
         }
         if (conferenceCallsNumber > 1) {
             throw new IllegalStateException(String.format("%s conference calls are in progress, 1 expected. Unable to proceed.",
@@ -883,7 +954,11 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 statistics.put(String.format(ACTIVE_CONFERENCE_CONNECTION_INFO_LABEL, connectionNumber), getJsonProperty(connections.get(i), "callInfo", String.class));
             }
         }
-        return getJsonProperty(activeConference, "id", Integer.class);
+
+        callConnectionData.setConferenceId(getJsonProperty(activeConference, "id", Integer.class));
+        callConnectionData.setConnectionId(getJsonProperty(connections.get(0), "id", Integer.class));
+        callConnectionData.setStartDate(getJsonProperty(connections.get(0), "startTime", Long.class));
+        return callConnectionData;
     }
 
     /**
