@@ -322,7 +322,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 if (null != conferenceId) {
                     String remoteAddress = getJsonProperty(meetingInfo, "address", String.class);
                     if (!StringUtils.isNullOrEmpty(remoteAddress) && remoteAddress.trim().equals(dialDevice.getDialString().trim())) {
-                        return String.format("%s:%s:%s", conferenceId, connectionId, startTime);
+                        return String.format("%s:%s:%s:%s", conferenceId, connectionId, startTime, retrieveDeviceDialString());
                     }
                 }
             }
@@ -333,11 +333,12 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     }
 
     /**
-     * Retrieve formatted callId based on the existing statistics data
+     * Retrieve dialString of the device, from the device statistics. Alternatively, use systemName if
+     * no address is available (e.g NH-StudioX30-53429a)
      *
-     * @return {@link String} value of the callId in a format "conferenceId:dialString" e.g "0:nh-studiox30@nh.vnoc1.com"
+     * @return {@link String} value of the device dialString (SIP or H323 extension)
      * */
-    private String retrieveCallId () throws Exception {
+    private String retrieveDeviceDialString() throws Exception {
         Map<String, String> statistics;
         if (localStatistics == null) {
             statistics = new HashMap<>();
@@ -559,9 +560,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 processConferenceCallMediaStats(conferenceCallMediaStats, audioChannelStats, videoChannelStats, callStats);
                 retrieveSharedMediaStats(contentChannelStats);
 
-                String remoteAddress = retrieveCallId();
-                callStats.setCallId(String.format("%s:%s:%s", conferenceId, connectionData.getCallId(), connectionData.getStartDate()));
-                callStats.setRemoteAddress(remoteAddress);
+                String dialString = retrieveDeviceDialString();
+                callStats.setCallId(String.format("%s:%s:%s:%s", conferenceId, connectionData.getCallId(), connectionData.getStartDate(), dialString));
+                callStats.setRemoteAddress(dialString);
 
                 endpointStatistics.setCallStats(callStats);
                 endpointStatistics.setAudioChannelStats(audioChannelStats);
