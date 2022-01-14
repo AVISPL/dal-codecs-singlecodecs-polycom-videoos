@@ -408,19 +408,24 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             Pattern pattern = Pattern.compile("(\\d+):(\\d+):.+$", Pattern.CASE_INSENSITIVE);
             Matcher matcher = pattern.matcher(callId);
             if (!StringUtils.isNullOrEmpty(callId) && matcher.find()) {
-                JsonNode response = doGet(String.format(CONFERENCE, matcher.group(1)), JsonNode.class);
-                if (response == null) {
-                    return generateCallStatus(callId, CallStatus.CallStatusState.Disconnected);
+                try {
+                    JsonNode response = doGet(String.format(CONFERENCE, matcher.group(1)), JsonNode.class);
+                    if (response == null) {
+                        return generateCallStatus(callId, CallStatus.CallStatusState.Disconnected);
+                    }
+                    Boolean conferenceIsActive = getJsonProperty(response, "isActive", Boolean.class);
+                    if (conferenceIsActive != null && conferenceIsActive) {
+                        return generateCallStatus(callId, CallStatus.CallStatusState.Connected);
+                    }
+                } catch (CommandFailureException cfe) {
+                    if (cfe.getStatusCode() == 404) {
+                        logger.warn("Conference " + callId + " is not available. Retrieving device inCall status based on existing calls.");
+                    }
                 }
-                Boolean conferenceIsActive = getJsonProperty(response, "isActive", Boolean.class);
-                if (conferenceIsActive != null && conferenceIsActive) {
-                    return generateCallStatus(callId, CallStatus.CallStatusState.Connected);
-                }
-            } else {
-                ArrayNode conferenceCalls = listConferenceCalls();
-                if (conferenceCalls != null && conferenceCalls.size() > 0) {
-                    return generateCallStatus(callId, CallStatus.CallStatusState.Connected);
-                }
+            }
+            ArrayNode conferenceCalls = listConferenceCalls();
+            if (conferenceCalls != null && conferenceCalls.size() > 0) {
+                return generateCallStatus(callId, CallStatus.CallStatusState.Connected);
             }
         } finally {
             controlOperationsLock.unlock();
