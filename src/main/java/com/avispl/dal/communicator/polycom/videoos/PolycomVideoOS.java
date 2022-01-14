@@ -392,40 +392,40 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * {@inheritDoc}
      * <p>
      * ConferenceId of format
-     * conferenceId:sipURI or
-     * conferenceId:H323Extension (based on the call protocol), for example
+     * conferenceId:callId:timestamp:sipURI or
+     * conferenceId:callId:timestamp::H323Extension (based on the call protocol), for example
      * <p>
-     * 0:nh-studiox30@nh.vnoc1.com
-     * 1:7771991048
+     * 0:2:1642153838000:nh-studiox30@nh.vnoc1.com
+     * 0:1:1642153837000:7771991048
      */
     @Override
-    public CallStatus retrieveCallStatus(String conferenceId) throws Exception {
+    public CallStatus retrieveCallStatus(String callId) throws Exception {
         if (logger.isDebugEnabled()) {
-            logger.debug("Retrieving call status with string: " + conferenceId);
+            logger.debug("Retrieving call status with string: " + callId);
         }
         controlOperationsLock.lock();
         try {
             Pattern pattern = Pattern.compile("(\\d+):(\\d+):.+$", Pattern.CASE_INSENSITIVE);
-            Matcher matcher = pattern.matcher(conferenceId);
-            if (!StringUtils.isNullOrEmpty(conferenceId) && matcher.find()) {
+            Matcher matcher = pattern.matcher(callId);
+            if (!StringUtils.isNullOrEmpty(callId) && matcher.find()) {
                 JsonNode response = doGet(String.format(CONFERENCE, matcher.group(1)), JsonNode.class);
                 if (response == null) {
-                    return generateCallStatus(conferenceId, CallStatus.CallStatusState.Disconnected);
+                    return generateCallStatus(callId, CallStatus.CallStatusState.Disconnected);
                 }
                 Boolean conferenceIsActive = getJsonProperty(response, "isActive", Boolean.class);
                 if (conferenceIsActive != null && conferenceIsActive) {
-                    return generateCallStatus(conferenceId, CallStatus.CallStatusState.Connected);
+                    return generateCallStatus(callId, CallStatus.CallStatusState.Connected);
                 }
             } else {
                 ArrayNode conferenceCalls = listConferenceCalls();
                 if (conferenceCalls != null && conferenceCalls.size() > 0) {
-                    return generateCallStatus(getJsonProperty(conferenceCalls.get(0), "id", String.class), CallStatus.CallStatusState.Connected);
+                    return generateCallStatus(callId, CallStatus.CallStatusState.Connected);
                 }
             }
         } finally {
             controlOperationsLock.unlock();
         }
-        return generateCallStatus(conferenceId, CallStatus.CallStatusState.Disconnected);
+        return generateCallStatus(callId, CallStatus.CallStatusState.Disconnected);
     }
 
     @Override
