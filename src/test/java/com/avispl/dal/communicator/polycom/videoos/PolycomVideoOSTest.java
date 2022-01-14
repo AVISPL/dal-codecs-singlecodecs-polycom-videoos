@@ -82,7 +82,7 @@ public class PolycomVideoOSTest {
 
     @Test
     public void testCallStatus() throws Exception {
-        CallStatus status = polycomVideoOS.retrieveCallStatus("conferences/0/connections/2");
+        CallStatus status = polycomVideoOS.retrieveCallStatus("0:2:1642153838000:nh-studiox30@nh.vnoc1.com");
         Assert.notNull(status, "Status should be present");
     }
 
