@@ -405,7 +405,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
         controlOperationsLock.lock();
         try {
-            Pattern pattern = Pattern.compile("(\\d+):/(\\d+):\\d+$", Pattern.CASE_INSENSITIVE);
+            Pattern pattern = Pattern.compile("(\\d+):(\\d+):.+$", Pattern.CASE_INSENSITIVE);
             Matcher matcher = pattern.matcher(conferenceId);
             if (!StringUtils.isNullOrEmpty(conferenceId) && matcher.find()) {
                 JsonNode response = doGet(String.format(CONFERENCE, matcher.group(1)), JsonNode.class);
