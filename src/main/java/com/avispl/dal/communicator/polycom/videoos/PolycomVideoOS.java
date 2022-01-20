@@ -55,12 +55,14 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * Exception type meant for inter-adapter communication.
      * Whenever it is not possible to retrieve a connection by the id provided - this exception indicates that the existing
      * connection should be used instead.
+     * @since 1.0.2
      */
     static class UnknownDeviceConnection extends IllegalStateException {}
 
     /**
      * Data transfer unit for keeping the conference data - conferenceId, callId and startDate,
      * to further use in callId creation process
+     * @since 1.0.2
      */
     static class CallConnectionData {
         private Integer conferenceId = -1;
@@ -325,13 +327,12 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         for (int i = 0; i < MAX_STATUS_POLL_ATTEMPT; i++) {
             JsonNode meetingInfo = doGet(meetingInfoUrl, JsonNode.class);
             if (meetingInfo != null) {
-                String conferenceId = getJsonProperty(meetingInfo, "parentConfId", String.class);
-                String connectionId = getJsonProperty(meetingInfo, "id", String.class);
-                String startTime = getJsonProperty(meetingInfo, "startTime", String.class);
+                Integer conferenceId = getJsonProperty(meetingInfo, "parentConfId", Integer.class);
                 if (null != conferenceId) {
                     String remoteAddress = getJsonProperty(meetingInfo, "address", String.class);
                     if (!StringUtils.isNullOrEmpty(remoteAddress) && remoteAddress.trim().equals(dialDevice.getDialString().trim())) {
-                        return String.format(CALL_ID_TEMPLATE, conferenceId, connectionId, startTime, retrieveDeviceDialString());
+                        return buildCallId (conferenceId, getJsonProperty(meetingInfo, "id", Integer.class),
+                                getJsonProperty(meetingInfo, "startTime", Long.class), retrieveDeviceDialString());
                     }
                 }
             }
@@ -370,9 +371,26 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         if (deviceConnection == null) {
             throw new UnknownDeviceConnection();
         }
-        return String.format(CALL_ID_TEMPLATE,
-                getJsonProperty(activeConference, "id", Integer.class), getJsonProperty(connections.get(0), "id", Integer.class),
+        return buildCallId(getJsonProperty(activeConference, "id", Integer.class), getJsonProperty(connections.get(0), "id", Integer.class),
                 getJsonProperty(deviceConnection, "startTime", Long.class), deviceDialString);
+    }
+
+    /**
+     * Build callId string using {@link #CALL_ID_TEMPLATE} and parameters provided
+     * Since callId is supposed to be unique and cisco devices provide ids as simple integers (0, 1, 2 etc)
+     * we need to provide higher uniqueness to avoid collisions with other devices' ids. Thus, dialString and
+     * callStartTime are used to form a callId
+     *
+     * @param conferenceId id of a conference
+     * @param callId id of a connection within conference
+     * @param callStartTime start timestamp of a {@code callId} connection
+     * @param dialString current device dialString
+     * @since 1.0.2
+     */
+    private String buildCallId (Integer conferenceId, Integer callId, Long callStartTime, String dialString) {
+        return String.format(CALL_ID_TEMPLATE,
+                conferenceId == null ? 0 : conferenceId, callId == null ? 0 : callId,
+                callStartTime == null ? 0 : callStartTime, dialString == null ? "" : dialString);
     }
 
     /**
@@ -380,6 +398,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * no address is available (e.g NH-StudioX30-53429a)
      *
      * @return {@link String} value of the device dialString (SIP or H323 extension)
+     * @since 1.0.2
      * */
     private String retrieveDeviceDialString() throws Exception {
         Map<String, String> statistics;
@@ -617,7 +636,8 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 retrieveSharedMediaStats(contentChannelStats);
 
                 String dialString = retrieveDeviceDialString();
-                callStats.setCallId(String.format(CALL_ID_TEMPLATE, conferenceId, connectionData.getCallId(), connectionData.getStartDate(), dialString));
+
+                callStats.setCallId(buildCallId(conferenceId, connectionData.getCallId(), connectionData.getStartDate(), dialString));
                 callStats.setRemoteAddress(dialString);
 
                 endpointStatistics.setCallStats(callStats);
@@ -999,16 +1019,18 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         // Adding i+1 instead of i so terminals and connections are listed starting with 1, not 0
         if (terminals != null) {
             for (int i = 0; i < terminals.size(); i++) {
+                JsonNode terminal = terminals.get(i);
                 int terminalNumber = i + 1;
-                statistics.put(String.format(ACTIVE_CONFERENCE_TERMINAL_ADDRESS_LABEL, terminalNumber), getJsonProperty(terminals.get(i), "address", String.class));
-                statistics.put(String.format(ACTIVE_CONFERENCE_TERMINAL_SYSTEM_LABEL, terminalNumber), getJsonProperty(terminals.get(i), "systemID", String.class));
+                statistics.put(String.format(ACTIVE_CONFERENCE_TERMINAL_ADDRESS_LABEL, terminalNumber), getJsonProperty(terminal, "address", String.class));
+                statistics.put(String.format(ACTIVE_CONFERENCE_TERMINAL_SYSTEM_LABEL, terminalNumber), getJsonProperty(terminal, "systemID", String.class));
             }
         }
         if (connections != null) {
             for (int i = 0; i < connections.size(); i++) {
+                JsonNode connection = connections.get(i);
                 int connectionNumber = i + 1;
-                statistics.put(String.format(ACTIVE_CONFERENCE_CONNECTION_TYPE_LABEL, connectionNumber), getJsonProperty(connections.get(i), "callType", String.class));
-                statistics.put(String.format(ACTIVE_CONFERENCE_CONNECTION_INFO_LABEL, connectionNumber), getJsonProperty(connections.get(i), "callInfo", String.class));
+                statistics.put(String.format(ACTIVE_CONFERENCE_CONNECTION_TYPE_LABEL, connectionNumber), getJsonProperty(connection, "callType", String.class));
+                statistics.put(String.format(ACTIVE_CONFERENCE_CONNECTION_INFO_LABEL, connectionNumber), getJsonProperty(connection, "callInfo", String.class));
             }
         }
 
