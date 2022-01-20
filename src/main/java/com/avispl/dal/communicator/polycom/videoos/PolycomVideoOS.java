@@ -489,7 +489,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                     }
                 } catch (UnknownDeviceConnection udc) {
                     // if connection id provided was not found - logging a warning and moving forward to retrieve the list of active conference calls
-                    logger.warn(String.format("Unable to locate active connection with id %s. Using available connection instead.", connectionId));
+                    logger.warn(String.format("Unable to locate active connection with id %s. Using available connection instead.", connectionId), udc);
                 }
             }
             ArrayNode conferenceCalls = listConferenceCalls();
