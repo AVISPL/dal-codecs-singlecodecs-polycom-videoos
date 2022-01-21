@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2020 AVI-SPL Inc. All Rights Reserved.
+ * Copyright (c) 2015-2022 AVI-SPL Inc. All Rights Reserved.
  */
 package com.avispl.dal.communicator.polycom.videoos;
 
@@ -33,6 +33,8 @@ import javax.security.auth.login.FailedLoginException;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.IntStream;
 
 /**
@@ -41,7 +43,7 @@ import java.util.stream.IntStream;
  * In order to have codec specific features available, CallController interface is used with dial(), hangup()
  * and callStatus() methods implemented.
  * sendMessage() is not implemented since there's no such functionality available in VideoOS REST API for now.
- *
+ * <p>
  * Polycom VideoOS REST API Reference Guide:
  * https://support.polycom.com/content/dam/polycom-support/products/telepresence-and-video/poly-studio-x/user/en/poly-video-restapi.pdf
  */
@@ -50,8 +52,81 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private ClientHttpRequestInterceptor videoOSInterceptor = new PolycomVideoOSInterceptor();
 
     /**
+     * Exception type meant for inter-adapter communication.
+     * Whenever it is not possible to retrieve a connection by the id provided - this exception indicates that the existing
+     * connection should be used instead.
+     * @since 1.0.2
+     */
+    static class UnknownDeviceConnection extends IllegalStateException {}
+
+    /**
+     * Data transfer unit for keeping the conference data - conferenceId, callId and startDate,
+     * to further use in callId creation process
+     * @since 1.0.2
+     */
+    static class CallConnectionData {
+        private Integer conferenceId = -1;
+        private Integer callId = -1;
+        private Long startDate = -1L;
+
+        /**
+         * Retrieves {@code {@link #conferenceId}}
+         *
+         * @return value of {@link #conferenceId}
+         */
+        public Integer getConferenceId() {
+            return conferenceId;
+        }
+
+        /**
+         * Sets {@code conferenceId}
+         *
+         * @param conferenceId the {@code java.lang.Integer} field
+         */
+        public void setConferenceId(Integer conferenceId) {
+            this.conferenceId = conferenceId;
+        }
+
+        /**
+         * Retrieves {@code {@link #callId}}
+         *
+         * @return value of {@link #callId}
+         */
+        public Integer getCallId() {
+            return callId;
+        }
+
+        /**
+         * Sets {@code callId}
+         *
+         * @param callId the {@code java.lang.Integer} field
+         */
+        public void setConnectionId(Integer callId) {
+            this.callId = callId;
+        }
+
+        /**
+         * Retrieves {@code {@link #startDate}}
+         *
+         * @return value of {@link #startDate}
+         */
+        public Long getStartDate() {
+            return startDate;
+        }
+
+        /**
+         * Sets {@code startDate}
+         *
+         * @param startDate the {@code java.lang.Long} field
+         */
+        public void setStartDate(Long startDate) {
+            this.startDate = startDate;
+        }
+    }
+
+    /**
      * Interceptor for RestTemplate that injects
-     *
+     * <p>
      * Currently, a reboot action changes previously accepted certificates, which would lead to
      * {@link ResourceNotReachableException} without a proper way to recover. Current workaround is to call
      * {@link #disconnect()} on reboot and on {@link ResourceNotReachableException} in the
@@ -113,11 +188,33 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private static final String ACTIVE_SESSIONS_LOCATION_LABEL = "ActiveSessions#Session%sLocation";
     private static final String ACTIVE_SESSIONS_CLIENT_TYPE_LABEL = "ActiveSessions#Session%sClientType";
     private static final String ACTIVE_SESSIONS_STATUS_LABEL = "ActiveSessions#Session%sStatus";
+    private static final String SYSTEM_NAME_LABEL = "System#System Name";
+    private static final String SYSTEM_SIP_USERNAME_LABEL = "System#SIPUsername";
+    private static final String SYSTEM_H323_EXTENSION_LABEL = "System#H323Extension";
+    private static final String SYSTEM_H323_NAME_LABEL = "System#H323Name";
+
+    private static final String SYSTEM_SERIAL_NUMBER_LABEL = "System#Serial Number";
+    private static final String SYSTEM_SOFTWARE_VERSION_LABEL = "System#Software Version";
+    private static final String SYSTEM_STATE_LABEL = "System#System State";
+    private static final String SYSTEM_BUILD_LABEL = "System#System Build";
+    private static final String SYSTEM_REBOOT_NEEDED_LABEL = "System#System Reboot Needed";
+    private static final String SYSTEM_DEVICE_MODEL_LABEL = "System#Device Model";
+    private static final String SYSTEM_HARDWARE_VERSION_LABEL = "System#Device Hardware Version";
+    private static final String SYSTEM_UPTIME_LABEL = "System#System Uptime";
+    private static final String LAN_STATUS_DUPLEX_LABEL = "Lan Status#Duplex";
+    private static final String LAN_STATUS_SPEED_LABEL = "Lan Status#Speed Mbps";
+    private static final String LAN_STATUS_STATE_LABEL = "Lan Status#State";
+
     private static final String CONTROL_MUTE_VIDEO = "MuteLocalVideo";
     private static final String CONTROL_MUTE_MICROPHONES = "MuteMicrophones";
     private static final String CONTROL_AUDIO_VOLUME = "AudioVolume";
     private static final String CONTROL_REBOOT = "Reboot";
 
+    private static final String REST_KEY_SIP_USERNAME = "comm.nics.sipnic.sipusername";
+    private static final String REST_KEY_H323_NAME = "comm.nics.h323nic.h323name";
+    private static final String REST_KEY_H323_EXTENSION = "comm.nics.h323nic.h323extension";
+
+    private static final String CALL_ID_TEMPLATE = "%s:%s:%s:%s";
 
     private static final String SESSION = "rest/current/session";
     private static final String STATUS = "rest/system/status";
@@ -132,6 +229,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private static final String CONTENT_STATUS = "rest/cameras/contentstatus";
     private static final String VOLUME = "rest/audio/volume";
     private static final String SYSTEM = "rest/system";
+    private static final String CONFIG = "rest/config";
     private static final String REBOOT = "rest/system/reboot";
     private static final String COLLABORATION = "rest/collaboration";
     private static final String MICROPHONES = "rest/audio/microphones";
@@ -193,16 +291,16 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
     /**
      * {@inheritDoc}
-     *
+     * <p>
      * If the call is in progress and another participant is addressed with {@link #CONFERENCES} POST call -
      * VideoOS Rest API will add the participant as another connection for the existing conference call, without
      * creating an additional conference call, so it is commonly expected that there's a single conference at most.
-     *
+     * <p>
      * After sending dial command we fetch for the status of the new conference call using the device connection
      * url that's being returned by the VideoOS API.
      *
      * @throws RuntimeException If we can't verify (via matching of the dialString (of the DialDevice) to the remoteAddress
-     * (of the call stats returned from the device)
+     *                          (of the call stats returned from the device)
      */
     @Override
     public String dial(DialDevice dialDevice) throws Exception {
@@ -229,11 +327,12 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         for (int i = 0; i < MAX_STATUS_POLL_ATTEMPT; i++) {
             JsonNode meetingInfo = doGet(meetingInfoUrl, JsonNode.class);
             if (meetingInfo != null) {
-                String conferenceId = getJsonProperty(meetingInfo, "parentConfId", String.class);
+                Integer conferenceId = getJsonProperty(meetingInfo, "parentConfId", Integer.class);
                 if (null != conferenceId) {
                     String remoteAddress = getJsonProperty(meetingInfo, "address", String.class);
                     if (!StringUtils.isNullOrEmpty(remoteAddress) && remoteAddress.trim().equals(dialDevice.getDialString().trim())) {
-                        return conferenceId;
+                        return buildCallId (conferenceId, getJsonProperty(meetingInfo, "id", Integer.class),
+                                getJsonProperty(meetingInfo, "startTime", Long.class), retrieveDeviceDialString());
                     }
                 }
             }
@@ -244,15 +343,91 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     }
 
     /**
-     * {@inheritDoc}
+     * Generate call id which includes conferenceId, connectionId, timestamp and device dial string.
      *
+     * @param activeConference json retrieved from the device API
+     * @param connectionId retrieved from Symphony (previously generated by the device)
+     * @param deviceDialString retrieved from the device's settings
+     *
+     * @return {@link String} of format
+     * conferenceId:callId:timestamp:sipURI or
+     * conferenceId:callId:timestamp::H323Extension (based on the call protocol), for example
+     * <p>
+     * 0:2:1642153838000:nh-studiox30@nh.vnoc1.com
+     * 0:1:1642153837000:7771991048
+     */
+    private String generateCallId (JsonNode activeConference, Integer connectionId, String deviceDialString) {
+        ArrayNode connections = (ArrayNode) activeConference.get("connections");
+        JsonNode deviceConnection = null;
+        if (connectionId != null) {
+            for (JsonNode node : connections) {
+                if (node.has("id") && node.get("id").asInt() == connectionId) {
+                    deviceConnection = node;
+                }
+            }
+        } else {
+            deviceConnection = connections.get(0);
+        }
+        if (deviceConnection == null) {
+            throw new UnknownDeviceConnection();
+        }
+        return buildCallId(getJsonProperty(activeConference, "id", Integer.class), getJsonProperty(connections.get(0), "id", Integer.class),
+                getJsonProperty(deviceConnection, "startTime", Long.class), deviceDialString);
+    }
+
+    /**
+     * Build callId string using {@link #CALL_ID_TEMPLATE} and parameters provided
+     * Since callId is supposed to be unique and cisco devices provide ids as simple integers (0, 1, 2 etc)
+     * we need to provide higher uniqueness to avoid collisions with other devices' ids. Thus, dialString and
+     * callStartTime are used to form a callId
+     *
+     * @param conferenceId id of a conference
+     * @param callId id of a connection within conference
+     * @param callStartTime start timestamp of a {@code callId} connection
+     * @param dialString current device dialString
+     * @since 1.0.2
+     */
+    private String buildCallId (Integer conferenceId, Integer callId, Long callStartTime, String dialString) {
+        return String.format(CALL_ID_TEMPLATE,
+                conferenceId == null ? 0 : conferenceId, callId == null ? 0 : callId,
+                callStartTime == null ? 0 : callStartTime, dialString == null ? "" : dialString);
+    }
+
+    /**
+     * Retrieve dialString of the device, from the device statistics. Alternatively, use systemName if
+     * no address is available (e.g NH-StudioX30-53429a)
+     *
+     * @return {@link String} value of the device dialString (SIP or H323 extension)
+     * @since 1.0.2
+     * */
+    private String retrieveDeviceDialString() throws Exception {
+        Map<String, String> statistics;
+        if (localStatistics == null) {
+            statistics = new HashMap<>();
+            retrieveCommunicationProtocolsInfo(statistics);
+        } else {
+            statistics = localStatistics.getStatistics();
+        }
+
+        String localAddress = statistics.get(SYSTEM_NAME_LABEL);
+        if (statistics.containsKey(SYSTEM_SIP_USERNAME_LABEL)) {
+            localAddress = statistics.get(SYSTEM_SIP_USERNAME_LABEL);
+        } else if (statistics.containsKey(SYSTEM_H323_EXTENSION_LABEL)) {
+            localAddress = statistics.get(SYSTEM_H323_EXTENSION_LABEL);
+        }
+
+        return localAddress;
+    }
+    /**
+     * {@inheritDoc}
+     * <p>
      * Locking is necessary because statistics is still being collected there and if the device is in the call
      * and collecting some information available while in the call only - it'll end up with a 404 error.
      * If there's a conferenceId available - only one conference is removed, otherwise - the method
      * iterates through all of the available conferences and removes them.
-     *
+     * <p>
      * {@link PolycomVideoOS} according to the VideoOS documentation for DELETE: /conferences/{conferenceId} method:
-     *      This API hangs up and disconnects the specified conference call.
+     * This API hangs up and disconnects the specified conference call.
      */
     @Override
     public void hangup(String conferenceId) throws Exception {
@@ -277,34 +452,55 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
     /**
      * {@inheritDoc}
-     *
+     * <p>
+     * ConferenceId of format
+     * conferenceId:callId:timestamp:sipURI or
+     * conferenceId:callId:timestamp::H323Extension (based on the call protocol), for example
+     * <p>
+     * 0:2:1642153838000:nh-studiox30@nh.vnoc1.com
+     * 0:1:1642153837000:7771991048
      */
     @Override
-    public CallStatus retrieveCallStatus(String conferenceId) throws Exception {
+    public CallStatus retrieveCallStatus(String callId) throws Exception {
         if (logger.isDebugEnabled()) {
-            logger.debug("Retrieving call status with string: " + conferenceId);
+            logger.debug("Retrieving call status with string: " + callId);
         }
         controlOperationsLock.lock();
         try {
-            if(!StringUtils.isNullOrEmpty(conferenceId)){
-                JsonNode response = doGet(String.format(CONFERENCE, conferenceId), JsonNode.class);
-                if (response == null) {
-                    return generateCallStatus(conferenceId, CallStatus.CallStatusState.Disconnected);
+            String deviceDialString = retrieveDeviceDialString();
+            Pattern pattern = Pattern.compile("(\\d+):(\\d+):.+$", Pattern.CASE_INSENSITIVE);
+            Matcher matcher = pattern.matcher(callId);
+            if (!StringUtils.isNullOrEmpty(callId) && matcher.find()) {
+                Integer connectionId = Integer.parseInt(matcher.group(2));
+                try {
+                    JsonNode response = doGet(String.format(CONFERENCE, matcher.group(1)), JsonNode.class);
+                    if (response == null) {
+                        return generateCallStatus(callId, CallStatus.CallStatusState.Disconnected);
+                    }
+                    Boolean conferenceIsActive = getJsonProperty(response, "isActive", Boolean.class);
+                    if (conferenceIsActive != null) {
+                        // Generating callId by given conference response and target connectionId
+                        return generateCallStatus(generateCallId(response, connectionId, deviceDialString),
+                                conferenceIsActive ? CallStatus.CallStatusState.Connected : CallStatus.CallStatusState.Disconnected);
+                    }
+                } catch (CommandFailureException cfe) {
+                    if (cfe.getStatusCode() == 404) {
+                        return generateCallStatus(callId, CallStatus.CallStatusState.Disconnected);
+                    }
+                } catch (UnknownDeviceConnection udc) {
+                    // if connection id provided was not found - logging a warning and moving forward to retrieve the list of active conference calls
+                    logger.warn(String.format("Unable to locate active connection with id %s. Using available connection instead.", connectionId), udc);
                 }
-                Boolean conferenceIsActive = getJsonProperty(response, "isActive", Boolean.class);
-                if (conferenceIsActive != null && conferenceIsActive) {
-                    return generateCallStatus(getJsonProperty(response, "id", String.class), CallStatus.CallStatusState.Connected);
-                }
-            } else {
-                ArrayNode conferenceCalls = listConferenceCalls();
-                if(conferenceCalls != null && conferenceCalls.size() > 0){
-                    return generateCallStatus(getJsonProperty(conferenceCalls.get(0), "id", String.class), CallStatus.CallStatusState.Connected);
-                }
+            }
+            ArrayNode conferenceCalls = listConferenceCalls();
+            if (conferenceCalls != null && conferenceCalls.size() > 0) {
+                // using null as the connectionId is unknown at this point
+                return generateCallStatus(generateCallId(conferenceCalls.get(0), null, deviceDialString), CallStatus.CallStatusState.Connected);
             }
         } finally {
             controlOperationsLock.unlock();
         }
-        return generateCallStatus(conferenceId, CallStatus.CallStatusState.Disconnected);
+        return generateCallStatus(callId, CallStatus.CallStatusState.Disconnected);
     }
 
     @Override
@@ -327,10 +523,10 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
     /**
      * {@inheritDoc}
-     *
+     * <p>
      * Since we need to react on the mute status change to have {@link #localStatistics} data synchronized with
      * the actual values that are sent here - we need to set new status for the locally stored control properties.
-     *
+     * <p>
      * Response code is handled by {@link com.avispl.symphony.dal.communicator.HttpCommunicator} so there's no
      * need for an additional status code check for validation.
      */
@@ -342,11 +538,11 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
     /**
      * {@inheritDoc}
-     *
+     * <p>
      * Since we need to react to the mute status change to have {@link #localStatistics} data synchronized with
      * the actual values that are sent here - we need to set new status for the locally stored control properties.
      * This is why response code is being checked for the operation.
-     *
+     * <p>
      * Response code is handled by {@link com.avispl.symphony.dal.communicator.HttpCommunicator} so there's no
      * need for an additional status code check for validation.
      */
@@ -358,7 +554,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
     /**
      * {@inheritDoc}
-     *
+     * <p>
      * Statistics collection implies calling multiple endpoints on VideoOS Rest API:
      * rest/system/status
      * rest/system
@@ -369,7 +565,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * rest/conferences/capabilities
      * rest/audio
      * rest/collaboration
-     *
+     * <p>
      * With the current synchronous approach, collecting all the statistics takes 1-2 sec so making this async for
      * now may not pay off, since it's not possible to reduce the number of requests and reach the same effect.
      */
@@ -400,6 +596,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
             retrieveSystemStatus(statistics);
             retrieveSystemInfo(statistics);
+            retrieveCommunicationProtocolsInfo(statistics);
             retrieveApplications(statistics);
             retrieveSessions(statistics);
             retrieveMicrophonesStatistics(statistics);
@@ -420,14 +617,14 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             extendedStatistics.setStatistics(statistics);
             extendedStatistics.setControllableProperties(controls);
 
-            Integer conferenceId = retrieveActiveConferenceCallStatistics(statistics);
+            CallConnectionData connectionData = retrieveActiveConferenceCallStatistics(statistics);
+            Integer conferenceId = connectionData.getConferenceId();
             boolean validConferenceId = conferenceId != null && conferenceId > -1;
 
             endpointStatistics.setInCall(validConferenceId);
             if (validConferenceId) {
                 CallStats callStats = new CallStats();
-                callStats.setCallId(String.valueOf(conferenceId));
-                callStats.setProtocol(statistics.get("Active Conference#Protocol"));
+                callStats.setProtocol(statistics.get("ActiveConference#Connection1Type"));
                 callStats.setRequestedCallRate(DEFAULT_CALL_RATE);
 
                 AudioChannelStats audioChannelStats = new AudioChannelStats();
@@ -437,6 +634,11 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 ArrayNode conferenceCallMediaStats = retrieveConferenceCallMediaStats(conferenceId);
                 processConferenceCallMediaStats(conferenceCallMediaStats, audioChannelStats, videoChannelStats, callStats);
                 retrieveSharedMediaStats(contentChannelStats);
+
+                String dialString = retrieveDeviceDialString();
+
+                callStats.setCallId(buildCallId(conferenceId, connectionData.getCallId(), connectionData.getStartDate(), dialString));
+                callStats.setRemoteAddress(dialString);
 
                 endpointStatistics.setCallStats(callStats);
                 endpointStatistics.setAudioChannelStats(audioChannelStats);
@@ -457,10 +659,10 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * Updates the local value of a given controllable property.
      *
      * @param controlName name of a controllable property stored in {@link #localStatistics} variable
-     * @param value target value of a controllable property
+     * @param value       target value of a controllable property
      */
     private void updateLocalControllablePropertyState(String controlName, String value) {
-        if(null != localStatistics) {
+        if (null != localStatistics) {
             localStatistics.getControllableProperties().stream().filter(advancedControllableProperty ->
                     advancedControllableProperty.getName().equals(controlName)).findFirst()
                     .ifPresent(advancedControllableProperty -> advancedControllableProperty.setValue(value));
@@ -470,11 +672,11 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     /**
      * Generate CallStatus instance based on callId and callStatusState parameters
      *
-     * @param callId id of the conference
+     * @param callId          id of the conference
      * @param callStatusState state of the call to use
      * @return {@link CallStatus} instance, indicating the requested status of the call
      */
-    private CallStatus generateCallStatus(String callId, CallStatus.CallStatusState callStatusState){
+    private CallStatus generateCallStatus(String callId, CallStatus.CallStatusState callStatusState) {
         CallStatus callStatus = new CallStatus();
         callStatus.setCallId(callId);
         callStatus.setCallStatusState(callStatusState);
@@ -498,11 +700,10 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * controllable property.
      * When operation has failed - RuntimeException is thrown, containing the reason of an unsuccessful operation, if
      * available, according to the {@link #VIDEO_MUTE} response body model:
-     *    {
-     *    "success": boolean,
-     *    "reason": "string"
-     *    }
-     *
+     * {
+     * "success": boolean,
+     * "reason": "string"
+     * }
      *
      * @param status boolean indicating the target outcoming video feed state
      * @throws Exception if any error has occurred
@@ -513,7 +714,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         JsonNode response = doPost(VIDEO_MUTE, request, JsonNode.class);
 
         Boolean success = getJsonProperty(response, "success", Boolean.class);
-        if(Boolean.TRUE.equals(success)) {
+        if (Boolean.TRUE.equals(success)) {
             updateLocalControllablePropertyState(CONTROL_MUTE_VIDEO, status ? "1" : "0");
         } else {
             throw new RuntimeException("Unable to update local video mute status: " +
@@ -523,12 +724,12 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
     /**
      * Get media statistics related to the current conference call
-     *
+     * <p>
      * Since VideoOS API does not provide any specific values for totalPacketLoss/percentPacketLoss/callRate - these
      * parameters are calculated based on audio and video channel rate/packetLoss information. VideoOS audio/video
      * channel rates are reported is in kbps (kilobits per second) by default,
      * which matches Symphony {@link ChannelStats} model
-     *
+     * <p>
      * If both video and audio channel stats are available and the specific value=!null - the data is summed up.
      * Null values are omitted, having both audio and video channel packet loss data==null will end up with passing
      * null value as the callStats parameter value (as an oppose to 0, which would mean that the values are provided
@@ -540,7 +741,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @param callStats                entity containing call stats
      */
     private void processConferenceCallMediaStats(ArrayNode conferenceCallMediaStats, AudioChannelStats audioChannelStats,
-                                                  VideoChannelStats videoChannelStats, CallStats callStats) {
+                                                 VideoChannelStats videoChannelStats, CallStats callStats) {
         conferenceCallMediaStats.forEach(jsonNode -> {
             switch (Objects.requireNonNull(getJsonProperty(jsonNode, "mediaDirection", String.class))) {
                 case "RX":
@@ -736,6 +937,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
         return normalizedUptime.toString().trim();
     }
+
     /**
      * Retrieve the current state of the collaboration session
      *
@@ -789,18 +991,19 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @param statistics map to put values to
      * @return active conference id (#0), -1 if there are no active conferences available
      * @throws IllegalStateException if more than 1 active conference was found
-     * @throws Exception if any other error has occurred
+     * @throws Exception             if any other error has occurred
      */
-    private Integer retrieveActiveConferenceCallStatistics(Map<String, String> statistics) throws Exception {
+    private CallConnectionData retrieveActiveConferenceCallStatistics(Map<String, String> statistics) throws Exception {
+        CallConnectionData callConnectionData = new CallConnectionData();
         ArrayNode conferenceCalls = listConferenceCalls();
         int conferenceCallsNumber = conferenceCalls.size();
 
         if (conferenceCallsNumber <= 0) {
-            return -1;
+            return callConnectionData;
         }
         if (conferenceCallsNumber > 1) {
-           throw new IllegalStateException(String.format("%s conference calls are in progress, 1 expected. Unable to proceed.",
-                   conferenceCallsNumber));
+            throw new IllegalStateException(String.format("%s conference calls are in progress, 1 expected. Unable to proceed.",
+                    conferenceCallsNumber));
         }
 
         JsonNode activeConference = conferenceCalls.get(0);
@@ -809,26 +1012,32 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
         statistics.put(ACTIVE_CONFERENCE_ID_LABEL, getJsonProperty(activeConference, "id", String.class));
         Long conferenceStartTimestamp = getJsonProperty(activeConference, "startTime", Long.class);
-        if(null != conferenceStartTimestamp) {
+        if (null != conferenceStartTimestamp) {
             statistics.put(ACTIVE_CONFERENCE_START_TIME_LABEL, String.valueOf(new Date(conferenceStartTimestamp)));
         }
 
         // Adding i+1 instead of i so terminals and connections are listed starting with 1, not 0
         if (terminals != null) {
-            for(int i = 0; i < terminals.size(); i++) {
+            for (int i = 0; i < terminals.size(); i++) {
+                JsonNode terminal = terminals.get(i);
                 int terminalNumber = i + 1;
-                statistics.put(String.format(ACTIVE_CONFERENCE_TERMINAL_ADDRESS_LABEL, terminalNumber), getJsonProperty(terminals.get(i), "address", String.class));
-                statistics.put(String.format(ACTIVE_CONFERENCE_TERMINAL_SYSTEM_LABEL, terminalNumber), getJsonProperty(terminals.get(i), "systemID", String.class));
+                statistics.put(String.format(ACTIVE_CONFERENCE_TERMINAL_ADDRESS_LABEL, terminalNumber), getJsonProperty(terminal, "address", String.class));
+                statistics.put(String.format(ACTIVE_CONFERENCE_TERMINAL_SYSTEM_LABEL, terminalNumber), getJsonProperty(terminal, "systemID", String.class));
             }
         }
         if (connections != null) {
-            for(int i = 0; i < connections.size(); i++) {
+            for (int i = 0; i < connections.size(); i++) {
+                JsonNode connection = connections.get(i);
                 int connectionNumber = i + 1;
-                statistics.put(String.format(ACTIVE_CONFERENCE_CONNECTION_TYPE_LABEL, connectionNumber), getJsonProperty(connections.get(i), "callType", String.class));
-                statistics.put(String.format(ACTIVE_CONFERENCE_CONNECTION_INFO_LABEL, connectionNumber), getJsonProperty(connections.get(i), "callInfo", String.class));
+                statistics.put(String.format(ACTIVE_CONFERENCE_CONNECTION_TYPE_LABEL, connectionNumber), getJsonProperty(connection, "callType", String.class));
+                statistics.put(String.format(ACTIVE_CONFERENCE_CONNECTION_INFO_LABEL, connectionNumber), getJsonProperty(connection, "callInfo", String.class));
             }
         }
-        return getJsonProperty(activeConference, "id", Integer.class);
+
+        callConnectionData.setConferenceId(getJsonProperty(activeConference, "id", Integer.class));
+        callConnectionData.setConnectionId(getJsonProperty(connections.get(0), "id", Integer.class));
+        callConnectionData.setStartDate(getJsonProperty(connections.get(0), "startTime", Long.class));
+        return callConnectionData;
     }
 
     /**
@@ -874,14 +1083,15 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * •  Miracast
      * •  HDMI input
      * •  Whiteboarding
+     *
      * @param contentChannelStats to save shared media stats to
      * @throws Exception during http communication (shared content stats retrieval)
      */
     private void retrieveSharedMediaStats(ContentChannelStats contentChannelStats) throws Exception {
         JsonNode response = doGet(SHARED_MEDIASTATS, JsonNode.class);
-        if(response != null) {
+        if (response != null) {
             ArrayNode vars = (ArrayNode) response.get("vars");
-            if(vars != null && vars.size() > 0){
+            if (vars != null && vars.size() > 0) {
                 JsonNode sharedStats = vars.get(0);
                 contentChannelStats.setFrameSizeTxWidth(getJsonProperty(sharedStats, "width", Integer.class));
                 contentChannelStats.setFrameSizeTxHeight(getJsonProperty(sharedStats, "height", Integer.class));
@@ -897,7 +1107,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * {@link ResourceNotReachableException} without a proper way to recover. Current workaround is to call
      * {@link #disconnect()} on reboot and on {@link ResourceNotReachableException} in the
      * {@link PolycomVideoOSInterceptor} in case if the device has been rebooted externally.
-     *
+     * <p>
      * Response code is handled by {@link com.avispl.symphony.dal.communicator.HttpCommunicator} so there's no
      * need for an additional status code check for validation, so if doPost request has succeeded - we can reset
      * the sessionId and call disconnect()
@@ -921,26 +1131,51 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      */
     private void retrieveSystemInfo(Map<String, String> statistics) throws Exception {
         JsonNode response = doGet(SYSTEM, JsonNode.class);
+
         if (response == null) {
             return;
         }
-        addStatisticsProperty(statistics, "System#Serial Number", response.get("serialNumber"));
-        addStatisticsProperty(statistics, "System#Software Version", response.get("softwareVersion"));
-        addStatisticsProperty(statistics, "System#System State", response.get("state"));
-        addStatisticsProperty(statistics, "System#System Name", response.get("systemName"));
-        addStatisticsProperty(statistics, "System#System Build", response.get("build"));
-        addStatisticsProperty(statistics, "System#System Reboot Needed", response.get("rebootNeeded"));
-        addStatisticsProperty(statistics, "System#Device Model", response.get("model"));
-        addStatisticsProperty(statistics, "System#Device Hardware Version", response.get("hardwareVersion"));
-        statistics.put( "System#System Uptime", normalizeUptime(response.get("uptime").asText()));
+        addStatisticsProperty(statistics, SYSTEM_SERIAL_NUMBER_LABEL, response.get("serialNumber"));
+        addStatisticsProperty(statistics, SYSTEM_SOFTWARE_VERSION_LABEL, response.get("softwareVersion"));
+        addStatisticsProperty(statistics, SYSTEM_STATE_LABEL, response.get("state"));
+        addStatisticsProperty(statistics, SYSTEM_NAME_LABEL, response.get("systemName"));
+        addStatisticsProperty(statistics, SYSTEM_BUILD_LABEL, response.get("build"));
+        addStatisticsProperty(statistics, SYSTEM_REBOOT_NEEDED_LABEL, response.get("rebootNeeded"));
+        addStatisticsProperty(statistics, SYSTEM_DEVICE_MODEL_LABEL, response.get("model"));
+        addStatisticsProperty(statistics, SYSTEM_HARDWARE_VERSION_LABEL, response.get("hardwareVersion"));
+        statistics.put(SYSTEM_UPTIME_LABEL, normalizeUptime(response.get("uptime").asText()));
 
         JsonNode lanStatus = response.get("lanStatus");
         if (lanStatus == null) {
             return;
         }
-        addStatisticsProperty(statistics, "Lan Status#Duplex", lanStatus.get("duplex"));
-        addStatisticsProperty(statistics, "Lan Status#Speed Mbps", lanStatus.get("speedMbps"));
-        addStatisticsProperty(statistics, "Lan Status#State", lanStatus.get("state"));
+        addStatisticsProperty(statistics, LAN_STATUS_DUPLEX_LABEL, lanStatus.get("duplex"));
+        addStatisticsProperty(statistics, LAN_STATUS_SPEED_LABEL, lanStatus.get("speedMbps"));
+        addStatisticsProperty(statistics, LAN_STATUS_STATE_LABEL, lanStatus.get("state"));
+    }
+
+    /**
+     * Retrieve device's SIP/H323 communication protocols data
+     *
+     * @param statistics map to put values to
+     * @throws Exception during http communication
+     */
+    private void retrieveCommunicationProtocolsInfo(Map<String, String> statistics) throws Exception {
+        JsonNode configResponse = doPost(CONFIG,
+                new AbstractMap.SimpleEntry("names", Arrays.asList(REST_KEY_H323_EXTENSION, REST_KEY_H323_NAME, REST_KEY_SIP_USERNAME)), JsonNode.class);
+
+        if (configResponse == null) {
+            return;
+        }
+        Map<String, String> properties = new HashMap<>();
+        configResponse.get("vars").forEach(node -> {
+            if (node.has("name") && node.has("value")) {
+                properties.put(node.get("name").asText(), node.get("value").asText());
+            }
+        });
+        statistics.put(SYSTEM_SIP_USERNAME_LABEL, properties.get(REST_KEY_SIP_USERNAME));
+        statistics.put(SYSTEM_H323_NAME_LABEL, properties.get(REST_KEY_H323_NAME));
+        statistics.put(SYSTEM_H323_EXTENSION_LABEL, properties.get(REST_KEY_H323_EXTENSION));
     }
 
     /**
