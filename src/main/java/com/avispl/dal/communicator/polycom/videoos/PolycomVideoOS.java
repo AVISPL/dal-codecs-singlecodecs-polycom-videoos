@@ -236,6 +236,10 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private static final String APPS = "rest/system/apps";
     private static final String SESSIONS = "rest/current/session/sessions";
 
+    private static final String SIP_SERVERS = "rest/system/sipservers";
+    private static final String H323_SERVERS = "/rest/system/h323gatekeepers";
+
+
     /**
      * A number of attempts to perform for getting the conference (call) status while performing
      * {@link #dial(DialDevice)} operation
@@ -622,6 +626,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             boolean validConferenceId = conferenceId != null && conferenceId > -1;
 
             endpointStatistics.setInCall(validConferenceId);
+            endpointStatistics.setRegistrationStatus(retrieveRegistrationStatus());
             if (validConferenceId) {
                 CallStats callStats = new CallStats();
                 callStats.setProtocol(statistics.get("ActiveConference#Connection1Type"));
@@ -645,7 +650,6 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 endpointStatistics.setVideoChannelStats(videoChannelStats);
                 endpointStatistics.setContentChannelStats(contentChannelStats);
             }
-
             localStatistics = extendedStatistics;
             localEndpointStatistics = endpointStatistics;
         } finally {
@@ -681,6 +685,38 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         callStatus.setCallId(callId);
         callStatus.setCallStatusState(callStatusState);
         return callStatus;
+    }
+
+    private RegistrationStatus retrieveRegistrationStatus() throws Exception {
+        RegistrationStatus registrationStatus = new RegistrationStatus();
+        JsonNode sipServers = doGet(SIP_SERVERS, JsonNode.class).get(0);
+        JsonNode h323Servers = doGet(H323_SERVERS, JsonNode.class).get(0);
+
+        registrationStatus.setSipRegistered(false);
+        registrationStatus.setH323Registered(false);
+
+        if (sipServers != null) {
+            JsonNode sipServerState = sipServers.get("state");
+            JsonNode sipServerIP = sipServers.get("address");
+            if (sipServerState != null) {
+                registrationStatus.setSipRegistered(sipServerState.asText().equalsIgnoreCase("up"));
+            }
+            if (sipServerIP != null) {
+                registrationStatus.setSipRegistrar(sipServerIP.asText());
+            }
+        }
+        if (h323Servers != null) {
+            JsonNode h323ServerState = h323Servers.get("state");
+            JsonNode h323ServerIP = h323Servers.get("address");
+            if (h323ServerState != null) {
+                registrationStatus.setH323Registered(h323ServerState.asText().equalsIgnoreCase("up"));
+            }
+            if (h323ServerIP != null) {
+                registrationStatus.setH323Gatekeeper(h323ServerIP.asText());
+            }
+        }
+
+        return registrationStatus;
     }
 
     /**
