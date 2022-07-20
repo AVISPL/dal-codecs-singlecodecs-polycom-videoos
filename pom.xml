@@ -6,7 +6,7 @@
 
     <groupId>com.avispl.symphony.dal.device.polycom.videoos</groupId>
     <artifactId>symphony-dal-communicator-polycom-videoos</artifactId>
-    <version>1.0.1</version>
+    <version>1.0.2</version>
     <properties>
         <symphonyApiVersion>RELEASE</symphonyApiVersion>
     </properties>
@@ -18,6 +18,35 @@
                 <configuration>
                     <source>8</source>
                     <target>8</target>
+                </configuration>
+            </plugin>
+            <plugin>
+                <!-- ${project.build.outputDirectory}/git.properties is generated at compile time -->
+                <groupId>pl.project13.maven</groupId>
+                <artifactId>git-commit-id-plugin</artifactId>
+                <version>4.9.10</version>
+                <executions>
+                    <execution>
+                        <id>get-the-git-infos</id>
+                        <goals>
+                            <goal>revision</goal>
+                        </goals>
+                        <phase>initialize</phase>
+                    </execution>
+                </executions>
+                <configuration>
+                    <generateGitPropertiesFile>true</generateGitPropertiesFile>
+                    <generateGitPropertiesFilename>${project.build.outputDirectory}/git.properties
+                    </generateGitPropertiesFilename>
+                    <includeOnlyProperties>
+                        <includeOnlyProperty>^git.build.(time|version)$</includeOnlyProperty>
+                        <includeOnlyProperty>^git.branch$</includeOnlyProperty>
+                        <includeOnlyProperty>^git.commit.(id.full|time)$</includeOnlyProperty>
+                        <includeOnlyProperty>^git.dirty$</includeOnlyProperty>
+                    </includeOnlyProperties>
+                    <commitIdGenerationMode>full</commitIdGenerationMode>
+                    <failOnUnableToExtractRepoInfo>false</failOnUnableToExtractRepoInfo>
+                    <failOnNoGitDirectory>false</failOnNoGitDirectory>
                 </configuration>
             </plugin>
             <plugin>
@@ -106,21 +135,21 @@
             <artifactId>symphony-api-dal</artifactId>
             <version>${symphonyApiVersion}</version>
             <scope>system</scope>
-            <systemPath>${basedir}/lib/symphony-api-dal-5.0.0.jar</systemPath>
+            <systemPath>${basedir}/lib/symphony-api-dal-5.4.0.jar</systemPath>
         </dependency>
         <dependency>
             <groupId>com.avispl.symphony.dal</groupId>
             <artifactId>symphony-dal-commons</artifactId>
             <version>${symphonyApiVersion}</version>
             <scope>system</scope>
-            <systemPath>${basedir}/lib/symphony-dal-commons-5.0.0.jar</systemPath>
+            <systemPath>${basedir}/lib/symphony-dal-commons-5.4.0.jar</systemPath>
         </dependency>
         <dependency>
             <groupId>com.avispl.symphony.api</groupId>
             <artifactId>symphony-api-commons</artifactId>
             <version>${symphonyApiVersion}</version>
             <scope>system</scope>
-            <systemPath>${basedir}/lib/symphony-api-commons-5.0.0.jar</systemPath>
+            <systemPath>${basedir}/lib/symphony-api-commons-5.4.0.jar</systemPath>
         </dependency>
         <dependency>
             <groupId>org.icmp4j</groupId>
@@ -152,19 +181,19 @@
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
-            <version>2.11.1</version>
+            <version>2.12.5</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.dataformat</groupId>
             <artifactId>jackson-dataformat-yaml</artifactId>
-            <version>2.11.1</version>
+            <version>2.12.5</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>org.snmp4j</groupId>
             <artifactId>snmp4j</artifactId>
-            <version>2.6.3</version>
+            <version>3.5.1</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
@@ -182,22 +211,22 @@
         <dependency>
             <groupId>org.apache.httpcomponents</groupId>
             <artifactId>httpclient</artifactId>
-            <version>4.4.1</version>
+            <version>4.5.13</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>net.java.dev.jna</groupId>
             <artifactId>jna-platform</artifactId>
-            <version>5.5.0</version>
+            <version>5.9.0</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>com.google.guava</groupId>
             <artifactId>guava</artifactId>
-            <version>27.1-jre</version>
+            <version>30.1.1-jre</version>
             <scope>provided</scope>
         </dependency>
-
+        <!-- test dependencies -->
         <dependency>
             <groupId>com.github.tomakehurst</groupId>
             <artifactId>wiremock-jre8</artifactId>
@@ -232,12 +261,6 @@
             <groupId>org.springframework</groupId>
             <artifactId>spring-test</artifactId>
             <version>5.1.9.RELEASE</version>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.sshd</groupId>
-            <artifactId>sshd-core</artifactId>
-            <version>2.2.0</version>
             <scope>test</scope>
         </dependency>
         <dependency>
