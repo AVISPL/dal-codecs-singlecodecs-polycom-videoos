@@ -727,9 +727,10 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     }
 
     /**
-     * Check whether the device is in the signage mode now
+     * Switch signage mode based on the mode parameter
      *
      * @return Boolean value, true -> signage mode, otherwise -> false
+     * @param mode defines, whether the command should switch codec into signage mode on or out of it. True = on, false = off
      * @throws Exception if a communication error occurs
      * */
     private void switchSignageMode(boolean mode) throws Exception {
@@ -741,9 +742,10 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     }
 
     /**
-     * Check whether the device is in the device mode now
+     * Switch device mode based on the mode parameter
      *
      * @return Boolean value, true -> device mode, otherwise -> false
+     * @param mode defines, whether the command should switch codec into device mode or out of it. True = on, false = off
      * @throws Exception if a communication error occurs
      * */
     private void switchDeviceMode(boolean mode) throws Exception {
