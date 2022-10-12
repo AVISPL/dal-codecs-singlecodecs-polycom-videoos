@@ -205,6 +205,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private static final String LAN_STATUS_SPEED_LABEL = "Lan Status#Speed Mbps";
     private static final String LAN_STATUS_STATE_LABEL = "Lan Status#State";
 
+    private static final String DEVICE_MODE_LABEL = "System#DeviceMode";
+    private static final String SIGNAGE_MODE_LABEL = "System#SignageMode";
+
     private static final String CONTROL_MUTE_VIDEO = "MuteLocalVideo";
     private static final String CONTROL_MUTE_MICROPHONES = "MuteMicrophones";
     private static final String CONTROL_AUDIO_VOLUME = "AudioVolume";
@@ -235,10 +238,10 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private static final String MICROPHONES = "rest/audio/microphones";
     private static final String APPS = "rest/system/apps";
     private static final String SESSIONS = "rest/current/session/sessions";
-
     private static final String SIP_SERVERS = "rest/system/sipservers";
-    private static final String H323_SERVERS = "/rest/system/h323gatekeepers";
-
+    private static final String H323_SERVERS = "rest/system/h323gatekeepers";
+    private static final String DEVICE_MODE = "rest/system/mode/device";
+    private static final String SIGNAGE_MODE = "rest/system/mode/signage";
 
     /**
      * A number of attempts to perform for getting the conference (call) status while performing
@@ -272,6 +275,8 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      */
     private static final int CONTROL_OPERATION_COOLDOWN_MS = 5000;
 
+    private Boolean simulatedDeviceMode = false;
+
     private final ReentrantLock controlOperationsLock = new ReentrantLock();
     private ExtendedStatistics localStatistics;
     private EndpointStatistics localEndpointStatistics;
@@ -282,6 +287,24 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      */
     public PolycomVideoOS() {
         setTrustAllCertificates(true);
+    }
+
+    /**
+     * Retrieves {@link #simulatedDeviceMode}
+     *
+     * @return value of {@link #simulatedDeviceMode}
+     */
+    public Boolean getSimulatedDeviceMode() {
+        return simulatedDeviceMode;
+    }
+
+    /**
+     * Sets {@link #simulatedDeviceMode} value
+     *
+     * @param simulatedDeviceMode new value of {@link #simulatedDeviceMode}
+     */
+    public void setSimulatedDeviceMode(Boolean simulatedDeviceMode) {
+        this.simulatedDeviceMode = simulatedDeviceMode;
     }
 
     @Override
@@ -591,6 +614,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 endpointStatistics.setCallStats(localEndpointStatistics.getCallStats());
                 endpointStatistics.setVideoChannelStats(localEndpointStatistics.getVideoChannelStats());
                 endpointStatistics.setAudioChannelStats(localEndpointStatistics.getAudioChannelStats());
+                endpointStatistics.setRegistrationStatus(localEndpointStatistics.getRegistrationStatus());
 
                 return Arrays.asList(extendedStatistics, endpointStatistics);
             }
@@ -608,6 +632,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             retrieveConferencingCapabilities(statistics);
             retrieveAudioStatus(statistics);
             retrieveCollaborationStatus(statistics);
+            retrieveSoftwareModeStatus(statistics, controls);
 
             statistics.put(CONTROL_AUDIO_VOLUME, "");
             controls.add(createSlider(CONTROL_AUDIO_VOLUME, 0.0f, 100.0f, Float.valueOf(retrieveVolumeLevel())));
@@ -660,6 +685,78 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     }
 
     /**
+     * Check whether the device is in the device mode now
+     *
+     * @return Boolean value, true -> device mode, otherwise -> false, Null if 404 response code
+     * @throws Exception if a communication error occurs
+     * */
+    private Boolean retrieveDeviceMode() throws Exception {
+        try {
+            JsonNode response = doGet(DEVICE_MODE, JsonNode.class);
+            return getJsonProperty(response, "result", Boolean.class);
+        } catch (CommandFailureException cfe) {
+            if (cfe.getStatusCode() != 404) {
+                throw cfe;
+            }
+            if (logger.isDebugEnabled()) {
+                logger.debug("Unable to retrieve device mode status.", cfe);
+            }
+            return null;
+        }
+    }
+
+    /**
+     * Check whether the device is in the signage mode now
+     *
+     * @return Boolean value, true -> signage mode, otherwise -> false. Null if 404 response code
+     * @throws Exception if a communication error occurs
+     * */
+    private Boolean retrieveSignageMode() throws Exception {
+        try {
+            JsonNode response = doGet(SIGNAGE_MODE, JsonNode.class);
+            return getJsonProperty(response, "result", Boolean.class);
+        } catch (CommandFailureException cfe) {
+            if (cfe.getStatusCode() != 404) {
+                throw cfe;
+            }
+            if (logger.isDebugEnabled()) {
+                logger.debug("Unable to retrieve signage mode status.", cfe);
+            }
+            return null;
+        }
+    }
+
+    /**
+     * Switch signage mode based on the mode parameter
+     *
+     * @return Boolean value, true -> signage mode, otherwise -> false
+     * @param mode defines, whether the command should switch codec into signage mode on or out of it. True = on, false = off
+     * @throws Exception if a communication error occurs
+     * */
+    private void switchSignageMode(boolean mode) throws Exception {
+        if (mode) {
+            doPost(SIGNAGE_MODE, null);
+        } else {
+            doDelete(SIGNAGE_MODE);
+        }
+    }
+
+    /**
+     * Switch device mode based on the mode parameter
+     *
+     * @return Boolean value, true -> device mode, otherwise -> false
+     * @param mode defines, whether the command should switch codec into device mode or out of it. True = on, false = off
+     * @throws Exception if a communication error occurs
+     * */
+    private void switchDeviceMode(boolean mode) throws Exception {
+        if (mode) {
+            doPost(DEVICE_MODE, null);
+        } else {
+            doDelete(DEVICE_MODE);
+        }
+    }
+
+    /**
      * Updates the local value of a given controllable property.
      *
      * @param controlName name of a controllable property stored in {@link #localStatistics} variable
@@ -688,7 +785,23 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     }
 
     private RegistrationStatus retrieveRegistrationStatus() throws Exception {
-        RegistrationStatus registrationStatus = new RegistrationStatus();
+        RegistrationStatus registrationStatus = null;
+        Boolean deviceMode = retrieveDeviceMode();
+        if (deviceMode != null && deviceMode) {
+            if (localEndpointStatistics != null) {
+                registrationStatus = localEndpointStatistics.getRegistrationStatus();
+            }
+            if (logger.isDebugEnabled()) {
+                logger.debug("The codec is in the device mode. Skipping registration status retrieval, falling back to the cached values");
+            }
+            if (registrationStatus == null) {
+                registrationStatus = new RegistrationStatus();
+            }
+            registrationStatus.setSipRegistered(true);
+            registrationStatus.setH323Registered(true);
+            return registrationStatus;
+        }
+        registrationStatus = new RegistrationStatus();
         JsonNode sipServers = doGet(SIP_SERVERS, JsonNode.class).get(0);
         JsonNode h323Servers = doGet(H323_SERVERS, JsonNode.class).get(0);
 
@@ -890,6 +1003,27 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             return a;
         }
         return Float.sum(a, b);
+    }
+
+    /**
+     * Retrieve software mode status details with switch controls
+     *
+     * @param statistics map to set data to
+     * @param controllableProperties list of controls
+     * @throws Exception during http communication, except 403
+     */
+    private void retrieveSoftwareModeStatus(Map<String, String> statistics, List<AdvancedControllableProperty> controllableProperties) throws Exception {
+        Boolean deviceMode = retrieveDeviceMode();
+        if (deviceMode != null) {
+            statistics.put(DEVICE_MODE_LABEL, String.valueOf(deviceMode));
+            controllableProperties.add(createSwitch(DEVICE_MODE_LABEL, "On", "Off", deviceMode));
+        }
+
+        Boolean signageMode = retrieveSignageMode();
+        if (signageMode != null) {
+            statistics.put(SIGNAGE_MODE_LABEL, String.valueOf(signageMode));
+            controllableProperties.add(createSwitch(SIGNAGE_MODE_LABEL, "On", "Off", signageMode));
+        }
     }
 
     /**
@@ -1424,7 +1558,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         try {
             switch (property) {
                 case CONTROL_MUTE_MICROPHONES:
-                    if (value.equals("0")) {
+                    if ("0".equals(value)) {
                         unmute();
                     } else {
                         mute();
@@ -1432,7 +1566,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                     updateLatestControlTimestamp();
                     break;
                 case CONTROL_MUTE_VIDEO:
-                    updateVideoMuteStatus(value.equals("1"));
+                    updateVideoMuteStatus("1".equals(value));
                     updateLatestControlTimestamp();
                     break;
                 case CONTROL_AUDIO_VOLUME:
@@ -1443,7 +1577,16 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                     reboot();
                     updateLatestControlTimestamp();
                     break;
+                case DEVICE_MODE_LABEL:
+                    switchDeviceMode("1".equals(value));
+                    break;
+                case SIGNAGE_MODE_LABEL:
+                    switchSignageMode("1".equals(value));
+                    break;
                 default:
+                    if (logger.isWarnEnabled()) {
+                        logger.warn("Unexpected control action " + property);
+                    }
                     break;
             }
         } finally {
