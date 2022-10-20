@@ -205,7 +205,7 @@
         <dependency>
             <groupId>org.snmp4j</groupId>
             <artifactId>snmp4j</artifactId>
-            <version>3.5.1</version>
+            <version>3.7.0</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
