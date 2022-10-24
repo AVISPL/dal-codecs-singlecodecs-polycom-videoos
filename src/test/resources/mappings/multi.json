@@ -1,0 +1,344 @@
+{
+  "mappings": [
+    {
+      "request": {
+        "method": "GET",
+        "url": "/rest/system/status",
+        "basicAuth": {
+          "username": "admin",
+          "password": "1234"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "[{\"langtag\":\"LAN_NETWORK_HEADING\",\"name\":\"system.status.ipnetwork\",\"stateList\":[\"up\"]},{\"langtag\":\"CAMERA_MODEL_BUILT_IN_1.0\",\"name\":\"system.status.trackablecamera\",\"stateList\":[\"up\"]},{\"langtag\":\"AUTO_ANSWER_P2P_HEADING\",\"name\":\"system.status.autoanswerp2p\",\"stateList\":[\"up\"]},{\"langtag\":\"SIP_SERVER_HEADING\",\"name\":\"system.status.sipserver\",\"stateList\":[\"up\"]},{\"langtag\":\"GATEKEEPER_HEADING\",\"name\":\"system.status.gatekeeper\",\"stateList\":[\"up\"]},{\"langtag\":\"CAMERAS_HEADING\",\"name\":\"system.status.mr.camera\",\"stateList\":[\"all_up\"]},{\"langtag\":\"PROVISIONING_SERVICE_HEADING\",\"name\":\"system.status.provisioning\",\"stateList\":[\"off\"]},{\"langtag\":\"MICROPHONES_HEADING\",\"name\":\"system.status.mr.audio\",\"stateList\":[\"all_up\"]},{\"langtag\":\"REMOTE_CONTROL_HEADING\",\"name\":\"system.status.remotecontrol\",\"stateList\":[\"off\"]},{\"langtag\":\"LOG_THRESHOLD_HEADING\",\"name\":\"system.status.logthreshold\",\"stateList\":[\"off\"]},{\"langtag\":\"SYSTEM_STATUS_GLOBALDIRECTORY_SERVER\",\"name\":\"system.status.globaldirectory\",\"stateList\":[\"off\"]},{\"langtag\":\"CALENDAR_SERVICE_HEADING\",\"name\":\"system.status.calendar\",\"stateList\":[\"off\"]}]",
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "/rest/system",
+        "basicAuth": {
+          "username": "admin",
+          "password": "1234"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "{\"build\":\"366027\",\"buildType\":\"Release\",\"hardwareVersion\":\"1\",\"lanStatus\":{\"duplex\":\"FULL\",\"speedMbps\":1000,\"state\":\"LAN_UP\"},\"model\":\"StudioX30\",\"rebootNeeded\":false,\"serialNumber\":\"8L200353429AFC\",\"softwareVersion\":\"3.12.0\",\"state\":\"ASLEEP\",\"systemName\":\"NH-StudioX30-53429a\",\"systemTime\":1666620755000,\"timeOffset\":-14400000,\"timeServerState\":\"TIMESERVER_UP\",\"uptime\":693845.31}\r\n",
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "/rest/system/apps",
+        "basicAuth": {
+          "username": "admin",
+          "password": "1234"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "[{\"appName\":\"Poly\",\"appSize\":2105179,\"ecoMode\":true,\"lastUpdatedOn\":1655177675000,\"packageName\":\"com.poly.polylauncher\",\"personaName\":\"Poly\",\"polyCallFeaturesEnabled\":true,\"versionInfo\":\"1.0\"},{\"appName\":\"Device Mode\",\"appSize\":27089127,\"ecoMode\":true,\"lastUpdatedOn\":1655177675000,\"packageName\":\"com.polycom.camuvc\",\"personaName\":\"camuvc\",\"polyCallFeaturesEnabled\":false,\"versionInfo\":\"1.0\"}]\r\n",
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "/rest/current/session/sessions",
+        "basicAuth": {
+          "username": "admin",
+          "password": "1234"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "{\"sessionList\":[{\"clientType\":\"WEB\",\"creationTime\":470944,\"isAuthenticated\":true,\"isConnected\":false,\"isNew\":true,\"isStale\":false,\"location\":\"172.31.32.231\",\"role\":\"ADMIN\",\"sessionId\":\"PSZSwXDnLHv82VnM0ygyHun8Ox6oT4oJbfiM94L6475kMj3lIo\",\"userId\":\"admin\"},{\"clientType\":\"WEB\",\"creationTime\":693760,\"isAuthenticated\":true,\"isConnected\":false,\"isNew\":true,\"isStale\":false,\"location\":\"172.31.15.66\",\"role\":\"ADMIN\",\"sessionId\":\"PS4nlWNP8Jns6ad58RI5SpFMiYmERl6xpz4S2wws2cq3iJCS2G\",\"userId\":\"admin\"},{\"clientType\":\"WEB\",\"creationTime\":251498,\"isAuthenticated\":true,\"isConnected\":false,\"isNew\":true,\"isStale\":false,\"location\":\"172.31.254.214\",\"role\":\"ADMIN\",\"sessionId\":\"PSbNqZLaeFhDVsc5iRGVD89LxJ2Oxb5mjsToPoROa4KvX45oX8\",\"userId\":\"admin\"},{\"clientType\":\"SSH\",\"creationTime\":668205,\"isAuthenticated\":true,\"isConnected\":false,\"isNew\":true,\"isStale\":false,\"location\":\"172.31.32.231\",\"role\":\"ADMIN\",\"sessionId\":\"PSpLPtt7tW4F1SVMO8noIQsZcu0Cc7fH6hVyY7exzUNDTaps9J\",\"userId\":\"admin\"},{\"clientType\":\"WEB\",\"creationTime\":682390,\"isAuthenticated\":true,\"isConnected\":false,\"isNew\":true,\"isStale\":false,\"location\":\"172.31.33.66\",\"role\":\"ADMIN\",\"sessionId\":\"PSJa9rhDNDIA5Ix0o3qQrZLIXaYUcdOQIhs+mZ927A1YU315JQ\",\"userId\":\"admin\"},{\"clientType\":\"SSH\",\"creationTime\":668191,\"isAuthenticated\":true,\"isConnected\":false,\"isNew\":true,\"isStale\":false,\"location\":\"172.31.32.231\",\"role\":\"ADMIN\",\"sessionId\":\"PSUgGu5zSnHclvnRYF3Mvpi0v9d42otGgOPgNwfbrRgth3fVfN\",\"userId\":\"admin\"},{\"clientType\":\"WEB\",\"creationTime\":693843,\"isAuthenticated\":true,\"isConnected\":false,\"isNew\":true,\"isStale\":false,\"location\":\"172.31.15.66\",\"role\":\"ADMIN\",\"sessionId\":\"PSeCiyqGBFlJSsKJJaR5EylTi1ABYDYztclUZBy3rTL\/vfgH72\",\"userId\":\"admin\"},{\"clientType\":\"WEB\",\"creationTime\":668205,\"isAuthenticated\":true,\"isConnected\":false,\"isNew\":true,\"isStale\":false,\"location\":\"172.31.32.231\",\"role\":\"ADMIN\",\"sessionId\":\"PSJGBH3ZhoLXjtZjKl8VcZ\/cjyfowqwflCZztuf\/rZ4yRR4Z4b\",\"userId\":\"admin\"}]}\r\n",
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "/rest/audio/microphones",
+        "basicAuth": {
+          "username": "admin",
+          "password": "1234"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "[{\"hwVersion\":\"NA\",\"mute\":0,\"number\":0,\"parentID\":0,\"state\":\"MIC_STATE_GREEN\",\"swVersion\":\"NA\",\"type\":84,\"typeInString\":\"Polycom Kitten Mic\"}]\n",
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "/rest/cameras/contentstatus",
+        "basicAuth": {
+          "username": "admin",
+          "password": "1234"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "CONTENT_IDLE",
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "/rest/conferences/capabilities",
+        "basicAuth": {
+          "username": "admin",
+          "password": "1234"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "{\"canBlastDial\":false,\"canMakeAudioCall\":true,\"canMakeVideoCall\":true}",
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "/rest/audio",
+        "basicAuth": {
+          "username": "admin",
+          "password": "1234"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "{\"muteLocked\":false,\"muted\":true,\"numOfMicsConnected\":1,\"volume\":39}",
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "/rest/collaboration",
+        "basicAuth": {
+          "username": "admin",
+          "password": "1234"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "{\"id\":\"Local Session\",\"state\":\"INACTIVE\"}",
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "/rest/system/mode/device",
+        "basicAuth": {
+          "username": "admin",
+          "password": "1234"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "{\"result\":false}",
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "/rest/system/mode/signage",
+        "basicAuth": {
+          "username": "admin",
+          "password": "1234"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "{\"result\":true}",
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "/rest/audio/volume",
+        "basicAuth": {
+          "username": "admin",
+          "password": "1234"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "39",
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "/rest/audio/muted",
+        "basicAuth": {
+          "username": "admin",
+          "password": "1234"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "true",
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "/rest/video/local/mute",
+        "basicAuth": {
+          "username": "admin",
+          "password": "1234"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "{\"result\":false}",
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "/rest/conferences",
+        "basicAuth": {
+          "username": "admin",
+          "password": "1234"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "[]",
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "url": "/rest/config",
+        "basicAuth": {
+          "username": "admin",
+          "password": "1234"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "{\"vars\":[{\"name\":\"comm.nics.h323nic.h323extension\",\"result\":\"NOERROR\",\"value\":\"7771991048\",\"isEditable\":true,\"isHidden\":false,\"isSecure\":false},{\"name\":\"comm.nics.h323nic.h323name\",\"result\":\"NOERROR\",\"value\":\"NH-StudioX30-53429a\",\"isEditable\":true,\"isHidden\":false,\"isSecure\":false},{\"name\":\"comm.nics.sipnic.sipusername\",\"result\":\"NOERROR\",\"value\":\"nh-studiox30@nh.vnoc1.com\",\"isEditable\":true,\"isHidden\":false,\"isSecure\":false}]}\n",
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "/rest/system/mode/device",
+        "basicAuth": {
+          "username": "admin",
+          "password": "1234"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "{\"result\":false}",
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "/rest/system/sipservers",
+        "basicAuth": {
+          "username": "admin",
+          "password": "1234"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "[{\"address\":\"172.31.254.64\",\"model\":\"Unknown\",\"state\":\"UP\",\"version\":\"\"}]",
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "/rest/system/h323gatekeepers",
+        "basicAuth": {
+          "username": "admin",
+          "password": "1234"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "[{\"address\":\"172.31.254.64\",\"model\":\"\",\"state\":\"UP\",\"version\":\"\"}]",
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "url": "/rest/current/devicemanagement/devices",
+        "basicAuth": {
+          "username": "admin",
+          "password": "1234"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": "[   {      \"connectionType\":\"Unknown\",      \"deviceCategory\":\"SYSTEM\",      \"deviceState\":\"CONNECTED\",      \"deviceType\":\"CODEC\",      \"ip\":\"172.31.254.150\",      \"macAddress\":\"00:e0:db:53:42:9a\",      \"networkInterface\":\"\",      \"productName\":\"StudioX30\",      \"serialNumber\":\"\",      \"softwareVersion\":\"3.12.0\",      \"systemName\":\"NH-StudioX30-53429a\",      \"uid\":\"local-system\"   },   {      \"connectionType\":\"Corp\",      \"deviceCategory\":\"MODULE\",      \"deviceState\":\"CONNECTED\",      \"deviceType\":\"TOUCHCONTROL\",      \"ip\":\"172.31.254.214\",      \"macAddress\":\"00e0db50a267\",      \"networkInterface\":\"eth0\",      \"productName\":\"Poly TC8\",      \"serialNumber\":\"8L200150A267FD\",      \"softwareVersion\":\"3.12.0-210716\",      \"systemName\":\"Poly TC8\",      \"uid\":\"3679494759\"   },   {      \"connectionType\":\"HDCI\",      \"deviceCategory\":\"CAMERA\",      \"deviceState\":\"PAIRED\",      \"deviceType\":\"CAMERA\",      \"ip\":\"\",      \"macAddress\":\"\",      \"networkInterface\":\"\",      \"productName\":\"\",      \"serialNumber\":\"\",      \"softwareVersion\":\"\",      \"systemName\":\"\",      \"uid\":\"local-camera\"   },   {      \"connectionType\":\"Unknown\",      \"deviceCategory\":\"REMOTE\",      \"deviceState\":\"PAIRED\",      \"deviceType\":\"UNKNOWN\",      \"ip\":\"\",      \"macAddress\":\"AA:BB:CC:DD:EE:FF\",      \"networkInterface\":\"\",      \"productName\":\"\",      \"serialNumber\":\"\",      \"softwareVersion\":\"\",      \"systemName\":\"\",      \"uid\":\"local-remote\"   },      {      \"connectionType\":\"Unknown\",      \"deviceCategory\":\"REMOTE\",      \"deviceState\":\"PAIRED\",      \"deviceType\":\"UNKNOWN\",      \"ip\":\"\",      \"macAddress\":\"FF:FF:FF:FF:FF:FF:FF\",      \"networkInterface\":\"\",      \"productName\":\"\",      \"serialNumber\":\"\",      \"softwareVersion\":\"\",      \"systemName\":\"\",      \"uid\":\"local-remote\"   },      {      \"connectionType\":\"Unknown\",      \"deviceCategory\":\"REMOTE\",      \"deviceState\":\"PAIRED\",      \"deviceType\":\"UNKNOWN\",      \"ip\":\"\",      \"macAddress\":\"AA:AA:AA:AA:AA:AA:AA:AA\",      \"networkInterface\":\"\",      \"productName\":\"\",      \"serialNumber\":\"\",      \"softwareVersion\":\"\",      \"systemName\":\"\",      \"uid\":\"local-remote\"   }]",
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      }
+    }
+  ]
+}

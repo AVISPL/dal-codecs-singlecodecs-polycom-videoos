@@ -220,7 +220,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private static final String REST_KEY_H323_EXTENSION = "comm.nics.h323nic.h323extension";
 
     private static final String CALL_ID_TEMPLATE = "%s:%s:%s:%s";
-    private static final String PERIPHERALS_TEMPLATE = "Peripherals[%s:%s:%s]#%s";
+    private static final String PERIPHERALS_TEMPLATE = "Peripherals[%s:%s:%s]#";
 
     private static final String SESSION = "rest/current/session";
     private static final String STATUS = "rest/system/status";
@@ -710,13 +710,29 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
     }
 
-    private void retrievePeripheralsInformation(Map<String, String> statistics) throws Exception {
-        ArrayNode response = doPost(PERIPHERAL_DEVICES, null, ArrayNode.class);
+    /**
+     * Add peripherals information, the {@link #PERIPHERAL_DEVICES} endpoint is not listed as a part of
+     * VideoOS REST API, so future implementation may change. For this reason, the exception is logged but does not
+     * stop any further statistics collection.
+     *
+     * @param statistics map to collect statistics to
+     * @since 1.0.4
+     * */
+    private void retrievePeripheralsInformation(Map<String, String> statistics) {
+        ArrayNode response;
+        try {
+            response = doPost(PERIPHERAL_DEVICES, null, ArrayNode.class);
+        } catch (Exception e) {
+            logger.error("Unable to retrieve peripheral devices information.", e);
+            return;
+        }
         if (response == null) {
             if (logger.isDebugEnabled()) {
                 logger.debug("Unable to retrieve peripheral devices information.");
             }
+            return;
         }
+        Map<String, String> tmp = new HashMap<>();
         response.forEach(device -> {
             String systemName = device.at("/systemName").asText();
             String uid = device.at("/uid").asText();
@@ -735,19 +751,73 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             String serialNumber = device.at("/serialNumber").asText();
             String softwareVersion = device.at("/softwareVersion").asText();
 
-            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, deviceType, connectionType, "ConnectionType"), connectionType);
-            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, deviceType, connectionType, "DeviceCategory"), deviceCategory);
-            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, deviceType, connectionType, "DeviceState"), deviceState);
-            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, deviceType, connectionType, "DeviceType"), deviceType);
-            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, deviceType, connectionType, "IPAddress"), ip);
-            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, deviceType, connectionType, "MACAddress"), macAddress);
-            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, deviceType, connectionType, "NetworkInterface"), networkInterface);
-            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, deviceType, connectionType, "ProductName"), productName);
-            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, deviceType, connectionType, "SerialNumber"), serialNumber);
-            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, deviceType, connectionType, "SoftwareVersion"), softwareVersion);
-            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, deviceType, connectionType, "SystemName"), systemName);
-            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, deviceType, connectionType, "UID"), uid);
+            String groupName = String.format(PERIPHERALS_TEMPLATE, deviceCategory, deviceType, connectionType);
+
+            processPropertyIfExists(statistics, groupName + "ConnectionType", connectionType);
+            processPropertyIfExists(statistics, groupName + "DeviceCategory", deviceCategory);
+            processPropertyIfExists(statistics, groupName + "DeviceState", deviceState);
+            processPropertyIfExists(statistics, groupName + "DeviceType", deviceType);
+            processPropertyIfExists(statistics, groupName + "IPAddress", ip);
+            processPropertyIfExists(statistics, groupName + "MACAddress", macAddress);
+            processPropertyIfExists(statistics, groupName + "NetworkInterface", networkInterface);
+            processPropertyIfExists(statistics, groupName + "ProductName", productName);
+            processPropertyIfExists(statistics, groupName + "SerialNumber", serialNumber);
+            processPropertyIfExists(statistics, groupName + "SoftwareVersion", softwareVersion);
+            processPropertyIfExists(statistics, groupName + "SystemName", systemName);
+            processPropertyIfExists(statistics, groupName + "UID", uid);
         });
+    }
+
+    /**
+     * Adds colon separated ordinal at the end of the property name, if the property already exists.
+     * If there is a property duplicate - add :1 in the end of the existing one, and :2 at the end of the new one.
+     * If :2+ properties already exist - increase the ordinal and add it to the property.
+     * ex:
+     * Duplicated properties of
+     * Peripherals[REMOTE:UNKNOWN:UNKNOWN]#MACAddress -> AA:BB:CC:DD:EE:FF
+     * Peripherals[REMOTE:UNKNOWN:UNKNOWN]#MACAddress -> FF:FF:FF:FF:FF:FF
+     * Peripherals[REMOTE:UNKNOWN:UNKNOWN]#MACAddress -> AA:AA:AA:AA:AA:AA
+     * will be saved as
+     * Peripherals[REMOTE:UNKNOWN:UNKNOWN]:1#MACAddress -> AA:BB:CC:DD:EE:FF
+     * Peripherals[REMOTE:UNKNOWN:UNKNOWN]:2#MACAddress -> FF:FF:FF:FF:FF:FF
+     * Peripherals[REMOTE:UNKNOWN:UNKNOWN]:3#MACAddress -> AA:AA:AA:AA:AA:AA
+     *
+     * @param statistics to add property to
+     * @param key property name to add
+     * @param value property value
+     * @since 1.0.4
+     * */
+    private void processPropertyIfExists(Map<String, String> statistics, String key, String value) {
+        if (statistics.containsKey(key)) {
+            String[] groupedPropertyEntries = key.split("#");
+            String[] keyEntries = groupedPropertyEntries[0].split("]:");
+            if (keyEntries.length > 1) {
+                // If there's an ordinal in the property name - increase it by 1 and try to pass it again to this method,
+                // just in case there are other properties with the same ordinal already.
+                int propertyOrdinal = Integer.parseInt(keyEntries[1]) + 1;
+                processPropertyIfExists(statistics, keyEntries[0] + "]:" + propertyOrdinal + "#" + groupedPropertyEntries[1], value);
+            } else {
+                String currentPropertyName = statistics.get(key);
+                // remove property with duplicate, but without ordinal, and replace it with a numbered property
+                // duplicate is passed to this method the same way, but with the number +1, so if the numbers are
+                // repeated - they end up being ordered correctly.
+                statistics.remove(key);
+                statistics.put(groupedPropertyEntries[0] + ":1#" + groupedPropertyEntries[1], currentPropertyName);
+                statistics.put(groupedPropertyEntries[0] + ":2#" + groupedPropertyEntries[1], value);
+            }
+            return;
+        }
+        boolean hasProperty = statistics.keySet().stream().filter(propertyName -> propertyName.startsWith("Peripherals")).anyMatch(propertyName -> {
+            // Check if there's an ordinal property duplicate, of the property that doesn't have ordinal yet.
+            // This way, an ordinal will be assigned to the property, please see javadoc for details.
+            String existingPropertyName = propertyName.replaceAll(":\\d+#", "#");
+            return Objects.equals(existingPropertyName, key);
+        });
+        if (hasProperty) {
+            processPropertyIfExists(statistics, key.replaceAll("#", ":1#"), value);
+            return;
+        }
+        statistics.put(key, value);
     }
 
     /**
