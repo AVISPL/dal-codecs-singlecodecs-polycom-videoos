@@ -220,7 +220,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private static final String REST_KEY_H323_EXTENSION = "comm.nics.h323nic.h323extension";
 
     private static final String CALL_ID_TEMPLATE = "%s:%s:%s:%s";
-    private static final String PERIPHERALS_TEMPLATE = "Peripherals[%s:%s]#%s";
+    private static final String PERIPHERALS_TEMPLATE = "Peripherals[%s:%s:%s]#%s";
 
     private static final String SESSION = "rest/current/session";
     private static final String STATUS = "rest/system/status";
@@ -711,9 +711,6 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     }
 
     private void retrievePeripheralsInformation(Map<String, String> statistics) throws Exception {
-        Map<String, String> request = new HashMap<>();
-        request.put("deviceState", "PAIRED");
-        //request.put("deviceState", "UNPAIRED");
         ArrayNode response = doPost(PERIPHERAL_DEVICES, null, ArrayNode.class);
         if (response == null) {
             if (logger.isDebugEnabled()) {
@@ -727,10 +724,10 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 // Skip if the device is the very same system that the codec is
                 return;
             }
-            String connectionType = device.at("/connectionType").asText();
-            String deviceCategory = device.at("/deviceCategory").asText();
-            String deviceState = device.at("/deviceState").asText();
-            String deviceType = device.at("/deviceType").asText();
+            String connectionType = device.at("/connectionType").asText().toUpperCase();
+            String deviceCategory = device.at("/deviceCategory").asText().toUpperCase();
+            String deviceState = device.at("/deviceState").asText().toUpperCase();
+            String deviceType = device.at("/deviceType").asText().toUpperCase();
             String ip = device.at("/ip").asText();
             String macAddress = device.at("/macAddress").asText();
             String networkInterface = device.at("/networkInterface").asText();
@@ -738,18 +735,18 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             String serialNumber = device.at("/serialNumber").asText();
             String softwareVersion = device.at("/softwareVersion").asText();
 
-            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, uid, "ConnectionType"), connectionType);
-            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, uid, "DeviceCategory"), deviceCategory);
-            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, uid, "DeviceState"), deviceState);
-            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, uid, "DeviceType"), deviceType);
-            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, uid, "IPAddress"), ip);
-            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, uid, "MACAddress"), macAddress);
-            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, uid, "NetworkInterface"), networkInterface);
-            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, uid, "ProductName"), productName);
-            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, uid, "SerialNumber"), serialNumber);
-            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, uid, "SoftwareVersion"), softwareVersion);
-            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, uid, "SystemName"), systemName);
-            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, uid, "UID"), uid);
+            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, deviceType, connectionType, "ConnectionType"), connectionType);
+            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, deviceType, connectionType, "DeviceCategory"), deviceCategory);
+            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, deviceType, connectionType, "DeviceState"), deviceState);
+            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, deviceType, connectionType, "DeviceType"), deviceType);
+            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, deviceType, connectionType, "IPAddress"), ip);
+            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, deviceType, connectionType, "MACAddress"), macAddress);
+            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, deviceType, connectionType, "NetworkInterface"), networkInterface);
+            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, deviceType, connectionType, "ProductName"), productName);
+            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, deviceType, connectionType, "SerialNumber"), serialNumber);
+            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, deviceType, connectionType, "SoftwareVersion"), softwareVersion);
+            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, deviceType, connectionType, "SystemName"), systemName);
+            statistics.put(String.format(PERIPHERALS_TEMPLATE, deviceCategory, deviceType, connectionType, "UID"), uid);
         });
     }
 
