@@ -732,7 +732,6 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             }
             return;
         }
-        Map<String, String> tmp = new HashMap<>();
         response.forEach(device -> {
             String systemName = device.at("/systemName").asText();
             String uid = device.at("/uid").asText();
