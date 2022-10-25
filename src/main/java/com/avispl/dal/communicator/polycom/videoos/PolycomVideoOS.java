@@ -37,6 +37,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.IntStream;
 
+import static com.avispl.symphony.dal.util.ControllablePropertyFactory.*;
+
 /**
  * PolycomVideoOS is a communicator class for X30/X50/G7500 devices.
  * The communicator is based on RestCommunicator class and is using VideoOS REST API to communicate with devices.
@@ -218,6 +220,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private static final String REST_KEY_H323_EXTENSION = "comm.nics.h323nic.h323extension";
 
     private static final String CALL_ID_TEMPLATE = "%s:%s:%s:%s";
+    private static final String PERIPHERALS_TEMPLATE = "Peripherals[%s:%s:%s]#";
 
     private static final String SESSION = "rest/current/session";
     private static final String STATUS = "rest/system/status";
@@ -242,6 +245,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private static final String H323_SERVERS = "rest/system/h323gatekeepers";
     private static final String DEVICE_MODE = "rest/system/mode/device";
     private static final String SIGNAGE_MODE = "rest/system/mode/signage";
+    private static final String PERIPHERAL_DEVICES = "rest/current/devicemanagement/devices";
 
     /**
      * A number of attempts to perform for getting the conference (call) status while performing
@@ -633,13 +637,14 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             retrieveAudioStatus(statistics);
             retrieveCollaborationStatus(statistics);
             retrieveSoftwareModeStatus(statistics, controls);
+            retrievePeripheralsInformation(statistics);
 
             statistics.put(CONTROL_AUDIO_VOLUME, "");
             controls.add(createSlider(CONTROL_AUDIO_VOLUME, 0.0f, 100.0f, Float.valueOf(retrieveVolumeLevel())));
             statistics.put(CONTROL_MUTE_MICROPHONES, "");
-            controls.add(createSwitch(CONTROL_MUTE_MICROPHONES, "On", "Off", retrieveMuteStatus().equals(MuteStatus.Muted)));
+            controls.add(createSwitch(CONTROL_MUTE_MICROPHONES, retrieveMuteStatus().equals(MuteStatus.Muted) ? 1 : 0));
             statistics.put(CONTROL_MUTE_VIDEO, "");
-            controls.add(createSwitch(CONTROL_MUTE_VIDEO, "On", "Off", retrieveVideoMuteStatus()));
+            controls.add(createSwitch(CONTROL_MUTE_VIDEO, retrieveVideoMuteStatus() ? 1 : 0));
             statistics.put(CONTROL_REBOOT, "");
             controls.add(createButton(CONTROL_REBOOT, CONTROL_REBOOT, "Rebooting...", REBOOT_GRACE_PERIOD_MS));
 
@@ -703,6 +708,115 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             }
             return null;
         }
+    }
+
+    /**
+     * Add peripherals information, the {@link #PERIPHERAL_DEVICES} endpoint is not listed as a part of
+     * VideoOS REST API, so future implementation may change. For this reason, the exception is logged but does not
+     * stop any further statistics collection.
+     *
+     * @param statistics map to collect statistics to
+     * @since 1.0.4
+     * */
+    private void retrievePeripheralsInformation(Map<String, String> statistics) {
+        ArrayNode response;
+        try {
+            response = doPost(PERIPHERAL_DEVICES, null, ArrayNode.class);
+        } catch (Exception e) {
+            logger.error("Unable to retrieve peripheral devices information.", e);
+            return;
+        }
+        if (response == null) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("Unable to retrieve peripheral devices information.");
+            }
+            return;
+        }
+        response.forEach(device -> {
+            String systemName = device.at("/systemName").asText();
+            String uid = device.at("/uid").asText();
+            if (StringUtils.isNullOrEmpty(uid) || Objects.equals(systemName, statistics.get(SYSTEM_NAME_LABEL))) {
+                // Skip if the device is the very same system that the codec is
+                return;
+            }
+            String connectionType = device.at("/connectionType").asText().toUpperCase();
+            String deviceCategory = device.at("/deviceCategory").asText().toUpperCase();
+            String deviceState = device.at("/deviceState").asText().toUpperCase();
+            String deviceType = device.at("/deviceType").asText().toUpperCase();
+            String ip = device.at("/ip").asText();
+            String macAddress = device.at("/macAddress").asText();
+            String networkInterface = device.at("/networkInterface").asText();
+            String productName = device.at("/productName").asText();
+            String serialNumber = device.at("/serialNumber").asText();
+            String softwareVersion = device.at("/softwareVersion").asText();
+
+            String groupName = String.format(PERIPHERALS_TEMPLATE, deviceCategory, deviceType, connectionType);
+
+            processPropertyIfExists(statistics, groupName + "ConnectionType", connectionType);
+            processPropertyIfExists(statistics, groupName + "DeviceCategory", deviceCategory);
+            processPropertyIfExists(statistics, groupName + "DeviceState", deviceState);
+            processPropertyIfExists(statistics, groupName + "DeviceType", deviceType);
+            processPropertyIfExists(statistics, groupName + "IPAddress", ip);
+            processPropertyIfExists(statistics, groupName + "MACAddress", macAddress);
+            processPropertyIfExists(statistics, groupName + "NetworkInterface", networkInterface);
+            processPropertyIfExists(statistics, groupName + "ProductName", productName);
+            processPropertyIfExists(statistics, groupName + "SerialNumber", serialNumber);
+            processPropertyIfExists(statistics, groupName + "SoftwareVersion", softwareVersion);
+            processPropertyIfExists(statistics, groupName + "SystemName", systemName);
+            processPropertyIfExists(statistics, groupName + "UID", uid);
+        });
+    }
+
+    /**
+     * Adds colon separated ordinal at the end of the property name, if the property already exists.
+     * If there is a property duplicate - add :1 in the end of the existing one, and :2 at the end of the new one.
+     * If :2+ properties already exist - increase the ordinal and add it to the property.
+     * ex:
+     * Duplicated properties of
+     * Peripherals[REMOTE:UNKNOWN:UNKNOWN]#MACAddress -> AA:BB:CC:DD:EE:FF
+     * Peripherals[REMOTE:UNKNOWN:UNKNOWN]#MACAddress -> FF:FF:FF:FF:FF:FF
+     * Peripherals[REMOTE:UNKNOWN:UNKNOWN]#MACAddress -> AA:AA:AA:AA:AA:AA
+     * will be saved as
+     * Peripherals[REMOTE:UNKNOWN:UNKNOWN]:1#MACAddress -> AA:BB:CC:DD:EE:FF
+     * Peripherals[REMOTE:UNKNOWN:UNKNOWN]:2#MACAddress -> FF:FF:FF:FF:FF:FF
+     * Peripherals[REMOTE:UNKNOWN:UNKNOWN]:3#MACAddress -> AA:AA:AA:AA:AA:AA
+     *
+     * @param statistics to add property to
+     * @param key property name to add
+     * @param value property value
+     * @since 1.0.4
+     * */
+    private void processPropertyIfExists(Map<String, String> statistics, String key, String value) {
+        if (statistics.containsKey(key)) {
+            String[] groupedPropertyEntries = key.split("#");
+            String[] keyEntries = groupedPropertyEntries[0].split("]:");
+            if (keyEntries.length > 1) {
+                // If there's an ordinal in the property name - increase it by 1 and try to pass it again to this method,
+                // just in case there are other properties with the same ordinal already.
+                int propertyOrdinal = Integer.parseInt(keyEntries[1]) + 1;
+                processPropertyIfExists(statistics, keyEntries[0] + "]:" + propertyOrdinal + "#" + groupedPropertyEntries[1], value);
+            } else {
+                String currentPropertyName = statistics.get(key);
+                // remove property with duplicate, but without ordinal, and replace it with a numbered property
+                // duplicate is passed to this method the same way, but with the number +1, so if the numbers are
+                // repeated - they end up being ordered correctly.
+                statistics.remove(key);
+                statistics.put(groupedPropertyEntries[0] + ":1#" + groupedPropertyEntries[1], currentPropertyName);
+                statistics.put(groupedPropertyEntries[0] + ":2#" + groupedPropertyEntries[1], value);
+            }
+            return;
+        }
+        boolean hasProperty = statistics.keySet().stream().filter(propertyName -> propertyName.startsWith("Peripherals")).anyMatch(propertyName -> {
+            // Check if there's an ordinal property duplicate, of the property that doesn't have ordinal yet.
+            // This way, an ordinal will be assigned to the property, please see javadoc for details.
+            String existingPropertyName = propertyName.replaceAll(":\\d+#", "#");
+            return Objects.equals(existingPropertyName, key);
+        });
+        if (hasProperty) {
+            processPropertyIfExists(statistics, key.replaceAll("#", ":1#"), value);
+            return;
+        }
+        statistics.put(key, value);
     }
 
     /**
@@ -1016,13 +1130,13 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         Boolean deviceMode = retrieveDeviceMode();
         if (deviceMode != null) {
             statistics.put(DEVICE_MODE_LABEL, String.valueOf(deviceMode));
-            controllableProperties.add(createSwitch(DEVICE_MODE_LABEL, "On", "Off", deviceMode));
+            controllableProperties.add(createSwitch(DEVICE_MODE_LABEL, deviceMode ? 1 : 0));
         }
 
         Boolean signageMode = retrieveSignageMode();
         if (signageMode != null) {
             statistics.put(SIGNAGE_MODE_LABEL, String.valueOf(signageMode));
-            controllableProperties.add(createSwitch(SIGNAGE_MODE_LABEL, "On", "Off", signageMode));
+            controllableProperties.add(createSwitch(SIGNAGE_MODE_LABEL, signageMode ? 1 : 0));
         }
     }
 
@@ -1614,60 +1728,6 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             restTemplateInterceptors.add(videoOSInterceptor);
 
         return restTemplate;
-    }
-
-    /**
-     * Instantiate Text controllable property
-     *
-     * @param name         name of the property
-     * @param labelOn      "On" label value
-     * @param labelOff     "Off" label value
-     * @param initialValue initial value of the switch control (1|0)
-     * @return instance of AdvancedControllableProperty with AdvancedControllableProperty.Switch as type
-     */
-    private AdvancedControllableProperty createSwitch(String name, String labelOn, String labelOff, Boolean initialValue) {
-        AdvancedControllableProperty.Switch controlSwitch = new AdvancedControllableProperty.Switch();
-        controlSwitch.setLabelOn(labelOn);
-        controlSwitch.setLabelOff(labelOff);
-        return new AdvancedControllableProperty(name, new Date(), controlSwitch, initialValue);
-    }
-
-    /***
-     * Create AdvancedControllableProperty slider instance
-     *
-     * @param name name of the control
-     * @param initialValue initial value of the control
-     * @param rangeStart start value for the slider
-     * @param rangeEnd end value for the slider
-     *
-     * @return AdvancedControllableProperty slider instance
-     */
-    private AdvancedControllableProperty createSlider(String name, Float rangeStart, Float rangeEnd, Float initialValue) {
-        AdvancedControllableProperty.Slider slider = new AdvancedControllableProperty.Slider();
-        slider.setLabelStart(String.valueOf(rangeStart));
-        slider.setLabelEnd(String.valueOf(rangeEnd));
-        slider.setRangeStart(rangeStart);
-        slider.setRangeEnd(rangeEnd);
-
-        return new AdvancedControllableProperty(name, new Date(), slider, initialValue);
-    }
-
-    /**
-     * Instantiate Text controllable property
-     *
-     * @param name         name of the property
-     * @param label        default button label
-     * @param labelPressed button label when is pressed
-     * @param gracePeriod  period to pause monitoring statistics for
-     * @return instance of AdvancedControllableProperty with AdvancedControllableProperty.Button as type
-     */
-    private AdvancedControllableProperty createButton(String name, String label, String labelPressed, long gracePeriod) {
-        AdvancedControllableProperty.Button button = new AdvancedControllableProperty.Button();
-        button.setLabel(label);
-        button.setLabelPressed(labelPressed);
-        button.setGracePeriod(gracePeriod);
-
-        return new AdvancedControllableProperty(name, new Date(), button, "");
     }
 
     /**
