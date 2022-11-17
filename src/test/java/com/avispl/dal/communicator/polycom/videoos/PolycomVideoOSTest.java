@@ -18,7 +18,6 @@ import static org.junit.Assert.fail;
 
 @Tag("integrationTest")
 public class PolycomVideoOSTest {
-
     PolycomVideoOS polycomVideoOS;
 
     @BeforeEach
