@@ -23,7 +23,7 @@ public class PolycomVideoOSTest {
     @BeforeEach
     public void setUp() throws Exception {
         polycomVideoOS = new PolycomVideoOS();
-        polycomVideoOS.setHost("172.31.254.150");
+        polycomVideoOS.setHost("172.31.254.151");
         polycomVideoOS.setProtocol("https");
         polycomVideoOS.setPort(443);
         polycomVideoOS.setPassword("1234");
