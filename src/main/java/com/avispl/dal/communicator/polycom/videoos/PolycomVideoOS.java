@@ -713,7 +713,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * */
     private Boolean retrieveDeviceMode() throws Exception {
         JsonNode response = doGet(DEVICE_MODE, JsonNode.class);
-        if (response == null) {
+        if (response == null || response.isNull()) {
             if (logger.isDebugEnabled()) {
                 logger.debug("Unable to retrieve device mode status.");
             }
@@ -928,11 +928,11 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         JsonNode h323Servers = null;
 
         JsonNode sipServersResponse = doGet(SIP_SERVERS, JsonNode.class);
-        if (sipServersResponse != null) {
+        if (sipServersResponse != null && !sipServersResponse.isNull()) {
             sipServers = sipServersResponse.get(0);
         }
         JsonNode h323ServersResponse = doGet(H323_SERVERS, JsonNode.class);
-        if (h323ServersResponse != null) {
+        if (h323ServersResponse != null && !h323ServersResponse.isNull()) {
             h323Servers = h323ServersResponse.get(0);
         }
         registrationStatus.setSipRegistered(false);
@@ -970,7 +970,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      */
     private Boolean retrieveVideoMuteStatus() throws Exception {
         JsonNode response = doGet(VIDEO_MUTE, JsonNode.class);
-        if (response == null) {
+        if (response == null || response.isNull()) {
             if (logger.isDebugEnabled()) {
                 logger.debug("Unable to retrieve video mute status.");
             }
@@ -1170,7 +1170,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      */
     private void retrieveSystemStatus(Map<String, String> statistics) throws Exception {
         ArrayNode response = doGet(STATUS, ArrayNode.class);
-        if (response == null) {
+        if (response == null || response.isNull()) {
             if (logger.isDebugEnabled()) {
                 logger.debug("Unable to retrieve device system status.");
             }
@@ -1360,7 +1360,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      */
     private ArrayNode listConferenceCalls() throws Exception {
         ArrayNode response = doGet(CONFERENCES, ArrayNode.class);
-        if (response != null) {
+        if (response != null && !response.isNull()) {
             return response;
         }
         return JsonNodeFactory.instance.arrayNode();
@@ -1376,7 +1376,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      */
     private ArrayNode retrieveConferenceCallMediaStats(int conferenceId) throws Exception {
         ArrayNode response = doGet(String.format(MEDIASTATS, conferenceId), ArrayNode.class);
-        if (response == null) {
+        if (response == null || response.isNull()) {
             if (logger.isDebugEnabled()) {
                 logger.debug("Conference " + conferenceId + " is not available anymore. Skipping media stats retrieval.");
             }
@@ -1400,7 +1400,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      */
     private void retrieveSharedMediaStats(ContentChannelStats contentChannelStats) throws Exception {
         JsonNode response = doGet(SHARED_MEDIASTATS, JsonNode.class);
-        if (response != null) {
+        if (response != null && !response.isNull()) {
             ArrayNode vars = (ArrayNode) response.get("vars");
             if (vars != null && vars.size() > 0) {
                 JsonNode sharedStats = vars.get(0);
@@ -1443,7 +1443,10 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private void retrieveSystemInfo(Map<String, String> statistics) throws Exception {
         JsonNode response = doGet(SYSTEM, JsonNode.class);
 
-        if (response == null) {
+        if (response == null || response.isNull()) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("Cannot retrieve system information.");
+            }
             return;
         }
         addStatisticsProperty(statistics, SYSTEM_SERIAL_NUMBER_LABEL, response.get("serialNumber"));
@@ -1475,7 +1478,10 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         JsonNode configResponse = doPost(CONFIG,
                 new AbstractMap.SimpleEntry("names", Arrays.asList(REST_KEY_H323_EXTENSION, REST_KEY_H323_NAME, REST_KEY_SIP_USERNAME)), JsonNode.class);
 
-        if (configResponse == null) {
+        if (configResponse == null || configResponse.isNull()) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("Cannot retrieve configuration data.");
+            }
             return;
         }
         Map<String, String> properties = new HashMap<>();
@@ -1497,7 +1503,10 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      */
     private void retrieveApplications(Map<String, String> statistics) throws Exception {
         JsonNode response = doGet(APPS, JsonNode.class);
-        if (response == null) {
+        if (response == null || response.isNull()) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("Cannot retrieve application details.");
+            }
             return;
         }
         JsonNode applications = response.get("apps");
@@ -1525,7 +1534,10 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      */
     private void retrieveSessions(Map<String, String> statistics) throws Exception {
         JsonNode response = doGet(SESSIONS, JsonNode.class);
-        if (response == null) {
+        if (response == null || response.isNull()) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("Cannot retrieve sessions information.");
+            }
             return;
         }
         JsonNode sessionList = response.get("sessionList");
@@ -1601,6 +1613,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private void retrieveConferencingCapabilities(Map<String, String> statistics) throws Exception {
         JsonNode response = doGet(CONFERENCING_CAPABILITIES, JsonNode.class);
         if (response == null) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("Cannot retrieve conferencing capabilities.");
+            }
             return;
         }
         statistics.put(CONFERENCING_CAPABILITIES_BLAST_DIAL, response.get("canBlastDial").asBoolean() ? "Available" : "Not Available");
@@ -1616,7 +1631,10 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      */
     private void retrieveAudioStatus(Map<String, String> statistics) throws Exception {
         JsonNode response = doGet(AUDIO, JsonNode.class);
-        if (response == null) {
+        if (response == null || response.isNull()) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("Cannot retrieve audio status.");
+            }
             return;
         }
         statistics.put(AUDIO_MUTE_LOCKED_LABEL, getJsonProperty(response, "muteLocked", String.class));
