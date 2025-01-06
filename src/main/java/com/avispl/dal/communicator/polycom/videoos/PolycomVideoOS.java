@@ -698,11 +698,26 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     @Override
     protected <Response> Response doGet(String uri, Class<Response> responseClass) throws Exception {
         try {
-            return super.doGet(uri, responseClass);
+            Response response = super.doGet(uri, responseClass);
+            if (logger.isDebugEnabled()) {
+                logger.debug("Uri: " + uri);
+                logger.debug("Response: " + response);
+            }
+            return response;
         } catch (CommandFailureException cfe) {
             logger.error("Exception while executing command: " + uri, cfe);
             return null;
         }
+    }
+
+    @Override
+    protected <Request, Response> Response doPost(String uri, Request data, Class<Response> responseClass) throws Exception {
+        Response response = super.doPost(uri, data, responseClass);
+        if (logger.isDebugEnabled()) {
+            logger.debug("Uri: " + uri);
+            logger.debug("Response: " + response);
+        }
+        return response;
     }
 
     /**
