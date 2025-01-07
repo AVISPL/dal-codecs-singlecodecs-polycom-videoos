@@ -35,6 +35,7 @@ import java.util.*;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import static com.avispl.symphony.dal.util.ControllablePropertyFactory.*;
@@ -172,7 +173,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private static final String ACTIVE_CONFERENCE_CONNECTION_TYPE_LABEL = "ActiveConference#Connection%sType";
     private static final String ACTIVE_CONFERENCE_CONNECTION_INFO_LABEL = "ActiveConference#Connection%sInfo";
     private static final String APPLICATIONS_VERSION_LABEL = "Applications#%sVersion";
-    private static final String APPLICATIONS_LAST_UPDATED_LABEL = "Applications#%SLastUpdated";
+    private static final String APPLICATIONS_LAST_UPDATED_LABEL = "Applications#%sLastUpdated";
+    private static final String APPLICATIONS_PROVIDER = "Applications#Provider";
+    private static final String APPLICATIONS_SAVE_PROVIDER = "Applications#SaveProvider";
     private static final String MICROPHONES_NAME_LABEL = "Microphones#Microphone%sName";
     private static final String MICROPHONES_STATUS_LABEL = "Microphones#Microphone%sState";
     private static final String MICROPHONES_TYPE_LABEL = "Microphones#Microphone%sType";
@@ -246,6 +249,8 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private static final String DEVICE_MODE = "rest/system/mode/device";
     private static final String SIGNAGE_MODE = "rest/system/mode/signage";
     private static final String PERIPHERAL_DEVICES = "rest/current/devicemanagement/devices";
+    private static final String SYSTEM_MODE = "rest/current/system/mode";
+    private static final String SYSTEM_APPS = "rest/current/system/apps/all";
 
     /**
      * A number of attempts to perform for getting the conference (call) status while performing
@@ -284,6 +289,8 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private final ReentrantLock controlOperationsLock = new ReentrantLock();
     private ExtendedStatistics localStatistics;
     private EndpointStatistics localEndpointStatistics;
+    private List<String> displayPropertyGroups = new ArrayList<>();
+    private String selectedApp = null;
 
     /**
      * Instantiate and object with trustAllCertificates set to 'true' for being able to
@@ -309,6 +316,24 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      */
     public void setSimulatedDeviceMode(Boolean simulatedDeviceMode) {
         this.simulatedDeviceMode = simulatedDeviceMode;
+    }
+
+    /**
+     * Retrieves {@link #displayPropertyGroups}
+     *
+     * @return value of {@link #displayPropertyGroups}
+     */
+    public String getDisplayPropertyGroups() {
+        return String.join(",", displayPropertyGroups);
+    }
+
+    /**
+     * Sets {@link #displayPropertyGroups} value
+     *
+     * @param displayPropertyGroups new value of {@link #displayPropertyGroups}
+     */
+    public void setDisplayPropertyGroups(String displayPropertyGroups) {
+        this.displayPropertyGroups = Arrays.stream(displayPropertyGroups.split(",")).map(String::trim).filter(StringUtils::isNotNullOrEmpty).collect(Collectors.toList());
     }
 
     @Override
@@ -626,18 +651,42 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             Map<String, String> statistics = new HashMap<>();
             List<AdvancedControllableProperty> controls = new ArrayList<>();
 
-            retrieveSystemStatus(statistics);
-            retrieveSystemInfo(statistics);
-            retrieveCommunicationProtocolsInfo(statistics);
-            retrieveApplications(statistics);
-            retrieveSessions(statistics);
-            retrieveMicrophonesStatistics(statistics);
-            retrieveContentStatus(statistics);
-            retrieveConferencingCapabilities(statistics);
-            retrieveAudioStatus(statistics);
-            retrieveCollaborationStatus(statistics);
-            retrieveSoftwareModeStatus(statistics, controls);
-            retrievePeripheralsInformation(statistics);
+            if(displayPropertyGroups.contains("SystemStatus")) {
+                retrieveSystemStatus(statistics);
+            }
+            if(displayPropertyGroups.contains("SystemInfo")) {
+                retrieveSystemInfo(statistics);
+            }
+            if(displayPropertyGroups.contains("CommunicationProtocols")) {
+                retrieveCommunicationProtocolsInfo(statistics);
+            }
+            if(displayPropertyGroups.contains("Applications")) {
+                retrieveApplications(statistics, controls);
+            }
+            if(displayPropertyGroups.contains("Sessions")) {
+                retrieveSessions(statistics);
+            }
+            if(displayPropertyGroups.contains("Microphones")) {
+                retrieveMicrophonesStatistics(statistics);
+            }
+            if(displayPropertyGroups.contains("ContentStatus")) {
+                retrieveContentStatus(statistics);
+            }
+            if(displayPropertyGroups.contains("ConferencingCapabilities")) {
+                retrieveConferencingCapabilities(statistics);
+            }
+            if(displayPropertyGroups.contains("AudioStatus")) {
+                retrieveAudioStatus(statistics);
+            }
+            if(displayPropertyGroups.contains("CollaborationStatus")) {
+                retrieveCollaborationStatus(statistics);
+            }
+            if(displayPropertyGroups.contains("SoftwareMode")) {
+                retrieveSoftwareModeStatus(statistics, controls);
+            }
+            if(displayPropertyGroups.contains("Peripherals")) {
+                retrievePeripheralsInformation(statistics);
+            }
 
             Integer volumeLevel = retrieveVolumeLevel();
             if (volumeLevel != null) {
@@ -698,26 +747,11 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     @Override
     protected <Response> Response doGet(String uri, Class<Response> responseClass) throws Exception {
         try {
-            Response response = super.doGet(uri, responseClass);
-            if (logger.isDebugEnabled()) {
-                logger.debug("Uri: " + uri);
-                logger.debug("Response: " + response);
-            }
-            return response;
+            return super.doGet(uri, responseClass);
         } catch (CommandFailureException cfe) {
             logger.error("Exception while executing command: " + uri, cfe);
             return null;
         }
-    }
-
-    @Override
-    protected <Request, Response> Response doPost(String uri, Request data, Class<Response> responseClass) throws Exception {
-        Response response = super.doPost(uri, data, responseClass);
-        if (logger.isDebugEnabled()) {
-            logger.debug("Uri: " + uri);
-            logger.debug("Response: " + response);
-        }
-        return response;
     }
 
     /**
@@ -875,6 +909,68 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             doPost(SIGNAGE_MODE, null);
         } else {
             doDelete(SIGNAGE_MODE);
+        }
+    }
+
+    /**
+     * Process and remember device mode application selection
+     * @param value to set selected application to
+     * */
+    private void processApplicationPreChange(String value) {
+        selectedApp = value;
+        List<AdvancedControllableProperty> controllableProperties = localStatistics.getControllableProperties();
+        Map<String, String> statistics = localStatistics.getStatistics();
+        if (controllableProperties == null) {
+            controllableProperties = new ArrayList<>();
+            localStatistics.setControllableProperties(controllableProperties);
+        }
+        if (statistics == null) {
+            statistics = new HashMap<>();
+        }
+        statistics.put(APPLICATIONS_SAVE_PROVIDER, "Save");
+        controllableProperties.add(createButton(APPLICATIONS_SAVE_PROVIDER, "Save", "Saving", 180000L));
+    }
+
+    /**
+     * Switch application based on the {@link #selectedApp} value, defined in {@link #processApplicationPreChange(String)} method
+     *
+     * @throws Exception if any error occurs
+     * */
+    private void switchApplication() throws Exception {
+        try {
+            if (selectedApp == null) {
+                List<AdvancedControllableProperty> controllableProperties = localStatistics.getControllableProperties();
+                Map<String, String> statistics = localStatistics.getStatistics();
+                if (controllableProperties != null) {
+                    controllableProperties.removeIf(controllableProperty -> controllableProperty.getName().equals(APPLICATIONS_SAVE_PROVIDER));
+                }
+                if (statistics != null) {
+                    statistics.remove(APPLICATIONS_SAVE_PROVIDER);
+                }
+                throw new RuntimeException("Unable to update device mode application: No selected application.");
+            }
+            Map<String, Object> request = new HashMap<>();
+            List<String> appNames = Collections.singletonList(selectedApp);
+            request.put("enabledapps", appNames);
+            JsonNode response = doPost(SYSTEM_MODE, request, JsonNode.class);
+
+            String error = response.at("/error").asText();
+            if (error.equalsIgnoreCase("noerror")) {
+                List<AdvancedControllableProperty> controllableProperties = localStatistics.getControllableProperties();
+                Map<String, String> statistics = localStatistics.getStatistics();
+                if (controllableProperties != null) {
+                    controllableProperties.stream().filter(controllableProperty -> (controllableProperty.getName().equalsIgnoreCase(APPLICATIONS_PROVIDER)))
+                            .findAny().ifPresent(controllableProperty -> controllableProperty.setValue(selectedApp));
+                    controllableProperties.removeIf(controllableProperty -> controllableProperty.getName().equals(APPLICATIONS_SAVE_PROVIDER));
+                }
+                if (statistics != null) {
+                    statistics.remove(APPLICATIONS_SAVE_PROVIDER);
+                }
+            } else {
+                throw new RuntimeException(String.format("Error while processing application update operation: %s", error));
+            }
+        } finally {
+            selectedApp = null;
         }
     }
 
@@ -1175,6 +1271,8 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             statistics.put(SIGNAGE_MODE_LABEL, String.valueOf(signageMode));
             controllableProperties.add(createSwitch(SIGNAGE_MODE_LABEL, signageMode ? 1 : 0));
         }
+
+
     }
 
     /**
@@ -1516,29 +1614,54 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @param statistics map to put values to
      * @throws Exception during http communication
      */
-    private void retrieveApplications(Map<String, String> statistics) throws Exception {
+    private void retrieveApplications(Map<String, String> statistics, List<AdvancedControllableProperty> controls) throws Exception {
         JsonNode response = doGet(APPS, JsonNode.class);
+        JsonNode systemAppsResponse = doGet(SYSTEM_APPS, JsonNode.class);
+
         if (response == null || response.isNull()) {
             if (logger.isDebugEnabled()) {
                 logger.debug("Cannot retrieve application details.");
             }
             return;
         }
-        JsonNode applications = response.get("apps");
-        if (applications == null) {
-            return;
-        }
-        applications.forEach(jsonNode -> {
-            String appName = getJsonProperty(jsonNode, "appName", String.class);
-            statistics.put(String.format(APPLICATIONS_VERSION_LABEL, appName),
-                    getJsonProperty(jsonNode, "versionInfo", String.class));
-
-            Long lastUpdatedOn = getJsonProperty(jsonNode, "lastUpdatedOn", Long.class);
-            if (lastUpdatedOn != null) {
-                statistics.put(String.format(APPLICATIONS_LAST_UPDATED_LABEL, appName),
-                        new Date(lastUpdatedOn).toString());
+        List<String> appNames = new ArrayList<>();
+        String currentApp = null;
+        Long lastUpdatedOn = 0L;
+        for (JsonNode node: response) {
+            // we need to make sure we have an original string for controls
+            String appNameRaw = getJsonProperty(node, "appName", String.class);
+            if (appNameRaw == null) {
+                logger.warn("Application name is null, skipping...");
+                continue;
             }
-        });
+            // the one without spaces is needed for monitored property name
+            String appName = appNameRaw.replaceAll("\\s", "");
+            statistics.put(String.format(APPLICATIONS_VERSION_LABEL, appName),
+                    getJsonProperty(node, "versionInfo", String.class));
+
+            Long currentLastUpdatedOn = getJsonProperty(node, "lastUpdatedOn", Long.class);
+            if (currentLastUpdatedOn != null) {
+                statistics.put(String.format(APPLICATIONS_LAST_UPDATED_LABEL, appName),
+                        new Date(currentLastUpdatedOn).toString());
+                if (currentLastUpdatedOn > lastUpdatedOn) {
+                    currentApp = appNameRaw;
+                    lastUpdatedOn = currentLastUpdatedOn;
+                }
+            }
+        }
+        if (StringUtils.isNotNullOrEmpty(selectedApp)) {
+            currentApp = selectedApp;
+            statistics.put(APPLICATIONS_SAVE_PROVIDER, "Save");
+            controls.add(createButton(APPLICATIONS_SAVE_PROVIDER, "Save", "Saving", 120000L));
+        } else {
+            controls.removeIf(controllableProperty -> controllableProperty.getName().equals(APPLICATIONS_SAVE_PROVIDER));
+            statistics.remove(APPLICATIONS_SAVE_PROVIDER);
+        }
+        for (JsonNode node: systemAppsResponse) {
+            appNames.add(getJsonProperty(node, "appName", String.class));
+        }
+        statistics.put(APPLICATIONS_PROVIDER, currentApp);
+        controls.add(createDropdown(APPLICATIONS_PROVIDER, appNames, currentApp));
     }
 
     /**
@@ -1770,6 +1893,14 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                     break;
                 case SIGNAGE_MODE_LABEL:
                     switchSignageMode("1".equals(value));
+                    break;
+                case APPLICATIONS_PROVIDER:
+                    processApplicationPreChange(value);
+                    updateLatestControlTimestamp();
+                    break;
+                case APPLICATIONS_SAVE_PROVIDER:
+                    switchApplication();
+                    updateLatestControlTimestamp();
                     break;
                 default:
                     if (logger.isWarnEnabled()) {
