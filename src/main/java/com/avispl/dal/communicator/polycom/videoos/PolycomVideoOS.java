@@ -219,7 +219,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      *
      * @since 1.0.6
      * */
-    private List<String> displayPropertyGroups = Collections.singletonList("System");
+    private List<String> displayPropertyGroups = Collections.singletonList("SystemStatus");
     /**
      * Currently selected application name
      *
@@ -619,7 +619,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             if(displayPropertyGroups.contains("SystemStatus")) {
                 retrieveSystemStatus(statistics);
             }
-            if(displayPropertyGroups.contains("SystemInfo")) {
+            if(displayPropertyGroups.contains("System")) {
                 retrieveSystemInfo(statistics);
             }
             if(displayPropertyGroups.contains("CommunicationProtocols")) {
