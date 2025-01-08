@@ -204,7 +204,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private final int CONTROL_OPERATION_COOLDOWN_MS = 5000;
     /**
      * Adapter metadata, collected from the version.properties
-     * @since 1.0.6
+     * @since 1.1.0
      */
     private Properties adapterProperties;
 
@@ -217,13 +217,13 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     /**
      * List of property groups to display
      *
-     * @since 1.0.6
+     * @since 1.1.0
      * */
     private List<String> displayPropertyGroups = Collections.singletonList("SystemStatus");
     /**
      * Currently selected application name
      *
-     * @since 1.0.6
+     * @since 1.1.0
      * */
     private String selectedApp = null;
 
@@ -257,7 +257,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * Retrieves {@link #displayPropertyGroups}
      *
      * @return value of {@link #displayPropertyGroups}
-     * @since 1.0.6
+     * @since 1.1.0
      */
     public String getDisplayPropertyGroups() {
         return String.join(",", displayPropertyGroups);
@@ -267,7 +267,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * Sets {@link #displayPropertyGroups} value
      *
      * @param displayPropertyGroups new value of {@link #displayPropertyGroups}
-     * @since 1.0.6
+     * @since 1.1.0
      */
     public void setDisplayPropertyGroups(String displayPropertyGroups) {
         this.displayPropertyGroups = Arrays.stream(displayPropertyGroups.split(",")).map(String::trim).filter(StringUtils::isNotNullOrEmpty).collect(Collectors.toList());
@@ -277,7 +277,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * Retrieves {@link #defaultCallRate}
      *
      * @return value of {@link #defaultCallRate}
-     * @since 1.0.6
+     * @since 1.1.0
      */
     public int getDefaultCallRate() {
         return defaultCallRate;
@@ -287,7 +287,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * Sets {@link #defaultCallRate} value
      *
      * @param defaultCallRate new value of {@link #defaultCallRate}
-     * @since 1.0.6
+     * @since 1.1.0
      */
     public void setDefaultCallRate(int defaultCallRate) {
         this.defaultCallRate = defaultCallRate;
@@ -616,40 +616,41 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
             List<AdvancedControllableProperty> controls = new ArrayList<>();
 
-            if(displayPropertyGroups.contains("SystemStatus")) {
+            boolean showAllGroups = displayPropertyGroups.contains("All");
+            if(showAllGroups || displayPropertyGroups.contains("SystemStatus")) {
                 retrieveSystemStatus(statistics);
             }
-            if(displayPropertyGroups.contains("System")) {
+            if(showAllGroups || displayPropertyGroups.contains("System")) {
                 retrieveSystemInfo(statistics);
             }
-            if(displayPropertyGroups.contains("CommunicationProtocols")) {
+            if(showAllGroups || displayPropertyGroups.contains("CommunicationProtocols")) {
                 retrieveCommunicationProtocolsInfo(statistics);
             }
-            if(displayPropertyGroups.contains("Applications")) {
+            if(showAllGroups || displayPropertyGroups.contains("Applications")) {
                 retrieveApplications(statistics, controls);
             }
-            if(displayPropertyGroups.contains("Sessions")) {
+            if(showAllGroups || displayPropertyGroups.contains("Sessions")) {
                 retrieveSessions(statistics);
             }
-            if(displayPropertyGroups.contains("Microphones")) {
+            if(showAllGroups || displayPropertyGroups.contains("Microphones")) {
                 retrieveMicrophonesStatistics(statistics);
             }
-            if(displayPropertyGroups.contains("ContentStatus")) {
+            if(showAllGroups || displayPropertyGroups.contains("ContentStatus")) {
                 retrieveContentStatus(statistics);
             }
-            if(displayPropertyGroups.contains("ConferencingCapabilities")) {
+            if(showAllGroups || displayPropertyGroups.contains("ConferencingCapabilities")) {
                 retrieveConferencingCapabilities(statistics);
             }
-            if(displayPropertyGroups.contains("AudioStatus")) {
+            if(showAllGroups || displayPropertyGroups.contains("AudioStatus")) {
                 retrieveAudioStatus(statistics);
             }
-            if(displayPropertyGroups.contains("CollaborationStatus")) {
+            if(showAllGroups || displayPropertyGroups.contains("CollaborationStatus")) {
                 retrieveCollaborationStatus(statistics);
             }
-            if(displayPropertyGroups.contains("SoftwareMode")) {
+            if(showAllGroups || displayPropertyGroups.contains("SoftwareMode")) {
                 retrieveSoftwareModeStatus(statistics, controls);
             }
-            if(displayPropertyGroups.contains("Peripherals")) {
+            if(showAllGroups || displayPropertyGroups.contains("Peripherals")) {
                 retrievePeripheralsInformation(statistics);
             }
 
@@ -1335,7 +1336,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @param uptimeSeconds value in seconds
      * @return string value of format 'x day(s) x hour(s) x minute(s) x minute(s)'
      *
-     * @since 1.0.6
+     * @since 1.1.0
      */
     private String normalizeUptime(long uptimeSeconds) {
         StringBuilder normalizedUptime = new StringBuilder();

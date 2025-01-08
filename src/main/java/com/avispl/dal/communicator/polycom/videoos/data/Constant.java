@@ -7,7 +7,7 @@ package com.avispl.dal.communicator.polycom.videoos.data;
  * Adapter constants, storage for URIs, property mapping model names, property names and predefined values
  *
  * @author Maksym.Rossiitsev/Symphony Team
- * @since 1.0.6
+ * @since 1.1.0
  * */
 public interface Constant {
     /**
