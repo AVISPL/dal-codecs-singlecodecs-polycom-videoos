@@ -219,7 +219,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      *
      * @since 1.1.0
      * */
-    private List<String> displayPropertyGroups = Collections.singletonList("SystemStatus");
+    private List<String> displayPropertyGroups = Collections.singletonList("All");
     /**
      * Currently selected application name
      *
