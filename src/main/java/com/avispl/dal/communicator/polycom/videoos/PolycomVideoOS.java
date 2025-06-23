@@ -32,6 +32,8 @@ import org.springframework.web.client.RestTemplate;
 
 import javax.security.auth.login.FailedLoginException;
 import java.io.IOException;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
@@ -163,7 +165,18 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             return response;
         }
     }
-
+    /**
+     * ISO8601 Date format to use for datetime monitored properties
+     * */
+    DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm");
+    /**
+     * VideoOS API polling interval. API requests will be performed once per this period of time.
+     * */
+    private int apiPollingInterval = 60000;
+    /**
+     * Last registered monitoring cycle timestamp (full monitoring cycle, with all the latest data delieved)
+     * */
+    private long lastMonitoredDataCollectionTimestamp = 0L;
     /**
      * A number of attempts to perform for getting the conference (call) status while performing
      * {@link #dial(DialDevice)} operation
@@ -233,6 +246,24 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      */
     public PolycomVideoOS() {
         setTrustAllCertificates(true);
+    }
+
+    /**
+     * Retrieves {@link #apiPollingInterval}
+     *
+     * @return value of {@link #apiPollingInterval}
+     */
+    public int getApiPollingInterval() {
+        return apiPollingInterval;
+    }
+
+    /**
+     * Sets {@link #apiPollingInterval} value
+     *
+     * @param apiPollingInterval new value of {@link #apiPollingInterval}
+     */
+    public void setApiPollingInterval(int apiPollingInterval) {
+        this.apiPollingInterval = apiPollingInterval;
     }
 
     /**
@@ -587,13 +618,19 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         ExtendedStatistics extendedStatistics = new ExtendedStatistics();
         EndpointStatistics endpointStatistics = new EndpointStatistics();
 
+        Map<String, String> statistics;
         controlOperationsLock.lock();
         try {
-            if (isValidControlCoolDown() && localStatistics != null && localEndpointStatistics != null) {
+            boolean validMonitoredDataCollectionInterval = (System.currentTimeMillis() - lastMonitoredDataCollectionTimestamp) >= apiPollingInterval;
+
+            if ((isValidControlCoolDown() && localStatistics != null && localEndpointStatistics != null) || !validMonitoredDataCollectionInterval) {
                 if (logger.isDebugEnabled()) {
                     logger.debug("Device is occupied. Skipping statistics refresh call.");
                 }
-                extendedStatistics.setStatistics(localStatistics.getStatistics());
+                statistics = localStatistics.getStatistics();
+
+                collectAdapterMetadata(statistics);
+                extendedStatistics.setStatistics(statistics);
                 extendedStatistics.setControllableProperties(localStatistics.getControllableProperties());
 
                 endpointStatistics.setInCall(localEndpointStatistics.isInCall());
@@ -604,18 +641,10 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
                 return Arrays.asList(extendedStatistics, endpointStatistics);
             }
-
-            Map<String, String> statistics = new HashMap<>();
-
-            statistics.put(Constant.Property.ADAPTER_VERSION, adapterProperties.getProperty("adapter.version"));
-            statistics.put(Constant.Property.ADAPTER_BUILD_DATE, adapterProperties.getProperty("adapter.build.date"));
-
-            long adapterUptime = System.currentTimeMillis() - adapterInitializationTimestamp;
-            statistics.put(Constant.Property.ADAPTER_UPTIME_MIN, String.valueOf(adapterUptime / (1000*60)));
-            statistics.put(Constant.Property.ADAPTER_UPTIME, normalizeUptime(adapterUptime/1000));
+            statistics = new HashMap<>();
+            collectAdapterMetadata(statistics);
 
             List<AdvancedControllableProperty> controls = new ArrayList<>();
-
             boolean showAllGroups = displayPropertyGroups.contains("All");
             if(showAllGroups || displayPropertyGroups.contains("SystemStatus")) {
                 retrieveSystemStatus(statistics);
@@ -701,12 +730,16 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 endpointStatistics.setVideoChannelStats(videoChannelStats);
                 endpointStatistics.setContentChannelStats(contentChannelStats);
             }
+
+            statistics.put(Constant.Property.ADAPTER_MONITORING_CYCLE_TIMESTAMP, dateFormat.format(new Date()));
+
             localStatistics = extendedStatistics;
             localEndpointStatistics = endpointStatistics;
         } finally {
             controlOperationsLock.unlock();
         }
 
+        lastMonitoredDataCollectionTimestamp = System.currentTimeMillis();
         return Arrays.asList(extendedStatistics, endpointStatistics);
     }
 
@@ -720,6 +753,19 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
     }
 
+    /**
+     * Collect adapter metadata - both from .properties file (version, build date) and based on the {@link #adapterInitializationTimestamp}
+     *
+     * @param statistics current statistics map to put data to
+     * */
+    private void collectAdapterMetadata(Map<String, String> statistics) {
+        statistics.put(Constant.Property.ADAPTER_VERSION, adapterProperties.getProperty("adapter.version"));
+        statistics.put(Constant.Property.ADAPTER_BUILD_DATE, adapterProperties.getProperty("adapter.build.date"));
+
+        long adapterUptime = System.currentTimeMillis() - adapterInitializationTimestamp;
+        statistics.put(Constant.Property.ADAPTER_UPTIME_MIN, String.valueOf(adapterUptime / (1000*60)));
+        statistics.put(Constant.Property.ADAPTER_UPTIME, normalizeUptime(adapterUptime/1000));
+    }
     /**
      * Check whether the device is in the device mode now
      *
@@ -746,6 +792,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @since 1.0.4
      * */
     private void retrievePeripheralsInformation(Map<String, String> statistics) {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Retrieving device peripherals information.");
+        }
         ArrayNode response;
         try {
             response = doPost(Constant.URI.PERIPHERAL_DEVICES, null, ArrayNode.class);
@@ -1226,6 +1275,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication, except 403
      */
     private void retrieveSoftwareModeStatus(Map<String, String> statistics, List<AdvancedControllableProperty> controllableProperties) throws Exception {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Retrieving device software mode status.");
+        }
         Boolean deviceMode = retrieveDeviceMode();
         if (deviceMode != null) {
             statistics.put(Constant.Property.DEVICE_MODE_LABEL, String.valueOf(deviceMode));
@@ -1246,6 +1298,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication, except 403
      */
     private void retrieveSystemStatus(Map<String, String> statistics) throws Exception {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Retrieving device system status information.");
+        }
         ArrayNode response = doGet(Constant.URI.STATUS, ArrayNode.class);
         if (response == null || response.isNull()) {
             if (logger.isDebugEnabled()) {
@@ -1368,6 +1423,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private void retrieveCollaborationStatus(Map<String, String> statistics) throws Exception {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Retrieving device collaboration status.");
+        }
         JsonNode response = doGet(Constant.URI.COLLABORATION, JsonNode.class);
         if (response != null && !response.isNull()) {
             String sessionState = getJsonProperty(response, "state", String.class);
@@ -1436,7 +1494,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         statistics.put(Constant.Property.ACTIVE_CONFERENCE_ID_LABEL, getJsonProperty(activeConference, "id", String.class));
         Long conferenceStartTimestamp = getJsonProperty(activeConference, "startTime", Long.class);
         if (null != conferenceStartTimestamp) {
-            statistics.put(Constant.Property.ACTIVE_CONFERENCE_START_TIME_LABEL, String.valueOf(new Date(conferenceStartTimestamp)));
+            statistics.put(Constant.Property.ACTIVE_CONFERENCE_START_TIME_LABEL, dateFormat.format(new Date(conferenceStartTimestamp)));
         }
 
         // Adding i+1 instead of i so terminals and connections are listed starting with 1, not 0
@@ -1552,6 +1610,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private void retrieveSystemInfo(Map<String, String> statistics) throws Exception {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Retrieving device system information.");
+        }
         JsonNode response = doGet(Constant.URI.SYSTEM, JsonNode.class);
 
         if (response == null || response.isNull()) {
@@ -1586,6 +1647,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private void retrieveCommunicationProtocolsInfo(Map<String, String> statistics) throws Exception {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Retrieving device communication protocols information.");
+        }
         JsonNode configResponse = doPost(Constant.URI.CONFIG,
                 new AbstractMap.SimpleEntry("names", Arrays.asList(Constant.Property.REST_KEY_H323_EXTENSION, Constant.Property.REST_KEY_H323_NAME, Constant.Property.REST_KEY_SIP_USERNAME)), JsonNode.class);
 
@@ -1613,6 +1677,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private void retrieveApplications(Map<String, String> statistics, List<AdvancedControllableProperty> controls) throws Exception {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Retrieving device applications information.");
+        }
         JsonNode response = doGet(Constant.URI.APPS, JsonNode.class);
         JsonNode systemAppsResponse = doGet(Constant.URI.SYSTEM_APPS, JsonNode.class);
 
@@ -1640,7 +1707,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             Long currentLastUpdatedOn = getJsonProperty(node, "lastUpdatedOn", Long.class);
             if (currentLastUpdatedOn != null) {
                 statistics.put(String.format(Constant.Property.APPLICATIONS_LAST_UPDATED_LABEL, appName),
-                        new Date(currentLastUpdatedOn).toString());
+                        dateFormat.format(new Date(currentLastUpdatedOn)));
                 if (currentLastUpdatedOn > lastUpdatedOn) {
                     currentApp = appNameRaw;
                     lastUpdatedOn = currentLastUpdatedOn;
@@ -1669,6 +1736,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private void retrieveSessions(Map<String, String> statistics) throws Exception {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Retrieving device sessions information.");
+        }
         JsonNode response = doGet(Constant.URI.SESSIONS, JsonNode.class);
         if (response == null || response.isNull()) {
             if (logger.isDebugEnabled()) {
@@ -1703,6 +1773,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private void retrieveMicrophonesStatistics(Map<String, String> statistics) throws Exception {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Retrieving device microphones information.");
+        }
         ArrayNode response = doGet(Constant.URI.MICROPHONES, ArrayNode.class);
         if (response == null) {
             if (logger.isDebugEnabled()) {
@@ -1734,6 +1807,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private void retrieveContentStatus(Map<String, String> statistics) throws Exception {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Retrieving device content status information.");
+        }
         String response = doGet(Constant.URI.CONTENT_STATUS, String.class);
         if (response != null) {
             statistics.put(Constant.Property.CAMERAS_CONTENT_STATUS, response);
@@ -1747,6 +1823,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private void retrieveConferencingCapabilities(Map<String, String> statistics) throws Exception {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Retrieving device conferencing capabilities.");
+        }
         JsonNode response = doGet(Constant.URI.CONFERENCING_CAPABILITIES, JsonNode.class);
         if (response == null) {
             if (logger.isDebugEnabled()) {
@@ -1766,6 +1845,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private void retrieveAudioStatus(Map<String, String> statistics) throws Exception {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Retrieving device audio status.");
+        }
         JsonNode response = doGet(Constant.URI.AUDIO, JsonNode.class);
         if (response == null || response.isNull()) {
             if (logger.isDebugEnabled()) {

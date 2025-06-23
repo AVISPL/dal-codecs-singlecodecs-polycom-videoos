@@ -68,10 +68,11 @@ public interface Constant {
         String CONTROL_MUTE_MICROPHONES = "MuteMicrophones";
         String CONTROL_AUDIO_VOLUME = "AudioVolume";
         String CONTROL_REBOOT = "Reboot";
-        String ADAPTER_UPTIME = "AdapterUptime";
-        String ADAPTER_UPTIME_MIN = "AdapterUptime(min)";
-        String ADAPTER_BUILD_DATE = "AdapterBuildDate";
-        String ADAPTER_VERSION = "AdapterVersion";
+        String ADAPTER_UPTIME = "AdapterMetadata#AdapterUptime";
+        String ADAPTER_UPTIME_MIN = "AdapterMetadata#AdapterUptime(min)";
+        String ADAPTER_BUILD_DATE = "AdapterMetadata#AdapterBuildDate";
+        String ADAPTER_VERSION = "AdapterMetadata#AdapterVersion";
+        String ADAPTER_MONITORING_CYCLE_TIMESTAMP = "AdapterMetadata#LastMonitoringCycleTimestamp";
 
         String REST_KEY_SIP_USERNAME = "comm.nics.sipnic.sipusername";
         String REST_KEY_H323_NAME = "comm.nics.h323nic.h323name";
