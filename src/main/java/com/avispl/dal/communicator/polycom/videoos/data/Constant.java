@@ -15,6 +15,12 @@ public interface Constant {
      * */
     interface Property {
         String SYSTEM_STATUS_GROUP_LABEL = "SystemStatus#";
+        String SYSTEM_GROUP_LABEL = "System#";
+        String LAN_STATUS_GROUP_LABEL = "Lan Status#";
+        String APPLICATIONS_GROUP_LABEL = "Applications#";
+        String ACTIVE_SESSIONS_GROUP_LABEL = "ActiveSessions#";
+        String MICROPHONES_GROUP_LABEL = "Microphones#";
+        String CONTENT_STATUS_GROUP_LABEL = "Content#";
         String COLLABORATION_SESSION_STATE_LABEL = "Collaboration#SessionState";
         String COLLABORATION_SESSION_ID_LABEL = "Collaboration#SessionId";
         String ACTIVE_CONFERENCE_ID_LABEL = "ActiveConference#ConferenceId";
@@ -69,6 +75,7 @@ public interface Constant {
         String CONTROL_AUDIO_VOLUME = "AudioVolume";
         String CONTROL_REBOOT = "Reboot";
         String ADAPTER_UPTIME = "AdapterMetadata#AdapterUptime";
+        String ADAPTER_PROPERTY_GROUPS = "AdapterMetadata#ActivePropertyGroups";
         String ADAPTER_UPTIME_MIN = "AdapterMetadata#AdapterUptime(min)";
         String ADAPTER_BUILD_DATE = "AdapterMetadata#AdapterBuildDate";
         String ADAPTER_VERSION = "AdapterMetadata#AdapterVersion";
@@ -112,5 +119,28 @@ public interface Constant {
         String PERIPHERAL_DEVICES = "rest/current/devicemanagement/devices";
         String SYSTEM_MODE = "rest/current/system/mode";
         String SYSTEM_APPS = "rest/current/system/apps/all";
+    }
+
+    /**
+     * Property group names to be processed by adapter
+     * @since @1.1.2
+     * */
+    interface PropertyGroup {
+        String SYSTEM_STATUS = "SystemStatus";
+        String SYSTEM = "System";
+        String COMMUNICATION_PROTOCOLS = "CommunicationProtocols";
+        String APPLICATIONS = "Applications";
+        String SESSIONS = "Sessions";
+        String MICROPHONES = "Microphones";
+        String CONTENT_STATUS = "ContentStatus";
+        String CONFERENCING_CAPABILITIES = "ConferencingCapabilities";
+        String AUDIO_STATUS = "AudioStatus";
+        String COLLABORATION_STATUS = "CollaborationStatus";
+        String SOFTWARE_MODE = "SoftwareMode";
+        String PERIPHERALS = "Peripherals";
+        String VOLUME = "Volume";
+        String VIDEO_MUTE = "VideoMute";
+        String AUDIO_MUTE = "AudioMute";
+        String CONFERENCES = "Conferences";
     }
 }
