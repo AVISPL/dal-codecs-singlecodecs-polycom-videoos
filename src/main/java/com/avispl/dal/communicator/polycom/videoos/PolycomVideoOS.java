@@ -155,11 +155,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
             ClientHttpResponse response = execution.execute(request, body);
             if (response.getRawStatusCode() == 403 && !request.getURI().getPath().endsWith(Constant.URI.SESSION) && !authorizationLock.isLocked()) {
-                System.out.println("Awaiting for authorization: " + request.getURI() + " sessionId " + sessionId);
                 authorizationLock.lock();
                 try {
                     try {
-                        System.out.println("Authorizing for " + request.getURI() + " sessionId " + sessionId);
                         authenticate();
                         failedLogin = false;
                     } catch (Exception e) {
@@ -879,13 +877,10 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
     @Override
     protected <Response> Response doGet(String uri, Class<Response> responseClass) throws Exception {
-        System.out.println("Attempting get request " + uri);
         httpRequestLock.lock();
         try {
-            System.out.println("Performing get request " + uri);
             return super.doGet(uri, responseClass);
         } catch (CommandFailureException cfe) {
-            System.out.println("Error during get request " + uri);
             logger.error("Exception while executing command: " + uri, cfe);
             return null;
         } finally {
@@ -2128,7 +2123,6 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     @Override
     protected void authenticate() throws Exception {
         // authenticate and get sessionId like "PSN0HppfZap7wtV9MgTeGKLZL+q8q+65Te6g/r61KLqC26+thY"
-        System.out.println("Performing authorization");
         ObjectNode request = JsonNodeFactory.instance.objectNode();
         request.put("user", getLogin());
         request.put("password", getPassword());
@@ -2137,9 +2131,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         Boolean success = getJsonProperty(json, "success", Boolean.class);
         if (success == null ? false : success) {
             sessionId = getJsonProperty(json.get("session"), "sessionId", String.class);
-            System.out.println("New sessionId " + sessionId);
         } else {
-            System.out.println("Unable to login!" + success);
             throw new FailedLoginException("Unable to login.");
         }
     }
