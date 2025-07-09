@@ -4,6 +4,7 @@
 package com.avispl.dal.communicator.polycom.videoos;
 
 import com.avispl.dal.communicator.polycom.videoos.data.Constant;
+import com.avispl.dal.communicator.polycom.videoos.error.APIStateReportHandler;
 import com.avispl.symphony.api.dal.control.Controller;
 import com.avispl.symphony.api.dal.control.call.CallController;
 import com.avispl.symphony.api.dal.dto.control.AdvancedControllableProperty;
@@ -262,12 +263,13 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private final Map<String, Future<?>> polyAPICallFutureList = new HashMap<>();
 
     private boolean failedLogin = false;
+    private APIStateReportHandler apiStateReportHandler;
     /**
      * List of property groups to display
      *
      * @since 1.1.0
      * */
-    private List<String> displayPropertyGroups = Collections.singletonList("All");
+    private List<String> displayPropertyGroups = new ArrayList<>(Arrays.asList("All"));
     /**
      * Property group presets, that imply only including certain parts of the API, without diving into
      * details of "what is it that we need". This setting overrides {@link #displayPropertyGroups}
@@ -390,6 +392,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     @Override
     protected void internalInit() throws Exception {
         super.internalInit();
+        apiStateReportHandler = new APIStateReportHandler();
 
         adapterInitializationTimestamp = System.currentTimeMillis();
         adapterProperties = new Properties();
@@ -727,9 +730,6 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      */
     @Override
     public List<Statistics> getMultipleStatistics() throws Exception {
-        if (failedLogin) {
-            throw new FailedLoginException("Authentication failed, please check device credentials.");
-        }
         ExtendedStatistics extendedStatistics = new ExtendedStatistics();
         EndpointStatistics endpointStatistics = new EndpointStatistics();
 
@@ -844,6 +844,11 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         endpointStatistics.setRegistrationStatus(localEndpointStatistics.getRegistrationStatus());
 
         lastMonitoredDataCollectionTimestamp = System.currentTimeMillis();
+
+        if (failedLogin) {
+            throw new FailedLoginException("Authentication failed, please check device credentials.");
+        }
+        apiStateReportHandler.verifyAPIState();
         return Arrays.asList(extendedStatistics, endpointStatistics);
     }
 
@@ -908,7 +913,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             futureRef = executorService.submit(() -> {
                 try {
                     process.execute();
+                    apiStateReportHandler.resolveError(apiSection);
                 } catch (Exception e) {
+                    apiStateReportHandler.pushError(apiSection, e);
                     logger.warn(String.format("Unable to retrieve Poly %s.", apiSection), e);
                 }
             });
