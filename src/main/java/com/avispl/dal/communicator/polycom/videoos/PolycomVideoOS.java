@@ -829,7 +829,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 }
             });
 
-            statistics.put(Constant.Property.CONTROL_REBOOT, "Reboot");
+            statistics.put(Constant.Property.CONTROL_REBOOT, Constant.Values.N_A);
             addControllableProperty(controls, createButton(Constant.Property.CONTROL_REBOOT, Constant.Property.CONTROL_REBOOT, "Rebooting...", REBOOT_GRACE_PERIOD_MS));
             statistics.put(Constant.Property.ADAPTER_MONITORING_CYCLE_TIMESTAMP, dateFormat.format(new Date()));
 
@@ -1116,7 +1116,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         if (statistics == null) {
             statistics = new HashMap<>();
         }
-        statistics.put(Constant.Property.APPLICATIONS_SAVE_PROVIDER, "Save");
+        statistics.put(Constant.Property.APPLICATIONS_SAVE_PROVIDER, Constant.Values.N_A);
         controllableProperties.add(createButton(Constant.Property.APPLICATIONS_SAVE_PROVIDER, "Save", "Saving", 180000L));
     }
 
