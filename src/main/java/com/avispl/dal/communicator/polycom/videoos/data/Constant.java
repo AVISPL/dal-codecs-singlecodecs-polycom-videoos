@@ -143,4 +143,12 @@ public interface Constant {
         String AUDIO_MUTE = "AudioMute";
         String CONFERENCES = "Conferences";
     }
+
+    /**
+     * Property values constants
+     * @since 1.1.1
+     * */
+    interface Values {
+        String N_A = "N/A";
+    }
 }

@@ -2113,7 +2113,11 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             return null;
         }
         if (type.equals(String.class)) {
-            return (T) value.asText();
+            String strValue = value.asText();
+            if (Objects.equals("NA", strValue) || StringUtils.isNullOrEmpty(strValue)) {
+                return (T) Constant.Values.N_A;
+            }
+            return (T) strValue;
         } else if (type.equals(Integer.class)) {
             return (T) Integer.valueOf(value.asInt());
         } else if (type.equals(Boolean.class)) {
