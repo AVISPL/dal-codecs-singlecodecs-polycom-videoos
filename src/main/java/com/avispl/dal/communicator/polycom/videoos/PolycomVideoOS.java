@@ -778,7 +778,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 Integer volumeLevel = retrieveVolumeLevel();
                 statistics.remove(Constant.Property.CONTROL_AUDIO_VOLUME);
                 if (volumeLevel != null) {
-                    statistics.put(Constant.Property.CONTROL_AUDIO_VOLUME, "");
+                    statistics.put(Constant.Property.CONTROL_AUDIO_VOLUME, String.valueOf(volumeLevel));
                     addControllableProperty(controls, createSlider(Constant.Property.CONTROL_AUDIO_VOLUME, 0.0f, 100.0f, Float.valueOf(volumeLevel)));
                 }
             });
@@ -786,13 +786,15 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 Boolean videoMuteStatus = retrieveVideoMuteStatus();
                 statistics.remove(Constant.Property.CONTROL_MUTE_VIDEO);
                 if (videoMuteStatus != null) {
-                    statistics.put(Constant.Property.CONTROL_MUTE_VIDEO, "");
-                    addControllableProperty(controls, createSwitch(Constant.Property.CONTROL_MUTE_VIDEO, retrieveVideoMuteStatus() ? 1 : 0));
+                    int value = retrieveVideoMuteStatus() ? 1 : 0;
+                    statistics.put(Constant.Property.CONTROL_MUTE_VIDEO, String.valueOf(value));
+                    addControllableProperty(controls, createSwitch(Constant.Property.CONTROL_MUTE_VIDEO, value));
                 }
             });
             processAsyncAPIRequest(Constant.PropertyGroup.AUDIO_MUTE, () -> {
-                statistics.put(Constant.Property.CONTROL_MUTE_MICROPHONES, "");
-                addControllableProperty(controls, createSwitch(Constant.Property.CONTROL_MUTE_MICROPHONES, Objects.equals(retrieveMuteStatus(), MuteStatus.Muted) ? 1 : 0));
+                int value = Objects.equals(retrieveMuteStatus(), MuteStatus.Muted) ? 1 : 0;
+                statistics.put(Constant.Property.CONTROL_MUTE_MICROPHONES, String.valueOf(value));
+                addControllableProperty(controls, createSwitch(Constant.Property.CONTROL_MUTE_MICROPHONES, value));
             });
 
             processAsyncAPIRequest(Constant.PropertyGroup.CONFERENCES, () -> {
@@ -827,10 +829,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 }
             });
 
-            statistics.put(Constant.Property.CONTROL_REBOOT, "");
+            statistics.put(Constant.Property.CONTROL_REBOOT, Constant.Values.N_A);
             addControllableProperty(controls, createButton(Constant.Property.CONTROL_REBOOT, Constant.Property.CONTROL_REBOOT, "Rebooting...", REBOOT_GRACE_PERIOD_MS));
             statistics.put(Constant.Property.ADAPTER_MONITORING_CYCLE_TIMESTAMP, dateFormat.format(new Date()));
-
 
             extendedStatistics.setStatistics(new HashMap<>(statistics));
             extendedStatistics.setControllableProperties(new ArrayList<>(controls));
@@ -1115,7 +1116,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         if (statistics == null) {
             statistics = new HashMap<>();
         }
-        statistics.put(Constant.Property.APPLICATIONS_SAVE_PROVIDER, "Save");
+        statistics.put(Constant.Property.APPLICATIONS_SAVE_PROVIDER, Constant.Values.N_A);
         controllableProperties.add(createButton(Constant.Property.APPLICATIONS_SAVE_PROVIDER, "Save", "Saving", 180000L));
     }
 
@@ -2112,7 +2113,11 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             return null;
         }
         if (type.equals(String.class)) {
-            return (T) value.asText();
+            String strValue = value.asText();
+            if (Objects.equals("NA", strValue) || StringUtils.isNullOrEmpty(strValue)) {
+                return (T) Constant.Values.N_A;
+            }
+            return (T) strValue;
         } else if (type.equals(Integer.class)) {
             return (T) Integer.valueOf(value.asInt());
         } else if (type.equals(Boolean.class)) {
