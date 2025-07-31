@@ -4,6 +4,7 @@
 package com.avispl.dal.communicator.polycom.videoos;
 
 import com.avispl.dal.communicator.polycom.videoos.data.Constant;
+import com.avispl.dal.communicator.polycom.videoos.error.APIStateReportHandler;
 import com.avispl.symphony.api.dal.control.Controller;
 import com.avispl.symphony.api.dal.control.call.CallController;
 import com.avispl.symphony.api.dal.dto.control.AdvancedControllableProperty;
@@ -32,7 +33,13 @@ import org.springframework.web.client.RestTemplate;
 
 import javax.security.auth.login.FailedLoginException;
 import java.io.IOException;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -63,6 +70,13 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      */
     static class UnknownDeviceConnection extends IllegalStateException {}
 
+    /**
+     * Interface created for passing method references meant for async execution
+     * @since 1.1.1
+     * */
+    interface AsyncProcess {
+        void execute() throws Exception;
+    }
     /**
      * Data transfer unit for keeping the conference data - conferenceId, callId and startDate,
      * to further use in callId creation process
@@ -141,11 +155,19 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         public ClientHttpResponse intercept(HttpRequest request, byte[] body, ClientHttpRequestExecution execution) throws IOException {
 
             ClientHttpResponse response = execution.execute(request, body);
-            if (response.getRawStatusCode() == 403 && !request.getURI().getPath().endsWith(Constant.URI.SESSION)) {
+            if (response.getRawStatusCode() == 403 && !request.getURI().getPath().endsWith(Constant.URI.SESSION) && !authorizationLock.isLocked()) {
+                authorizationLock.lock();
                 try {
-                    authenticate();
+                    try {
+                        authenticate();
+                        failedLogin = false;
+                    } catch (Exception e) {
+                        failedLogin = true;
+                        logger.error("Exception during authentication process.", e);
+                    }
                     response = execution.execute(request, body);
                 } catch (ResourceNotReachableException e) {
+                    logger.warn("Exception during authorization command.", e);
                     // In case it's been rebooted by some other resource - we need to react to that.
                     // Normally we expect that the authorization request timeouts, since previous one failed with
                     // a specific error code, so basically we do the same as before - authenticate + retry previous
@@ -158,12 +180,32 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                     }
                 } catch (Exception e) {
                     logger.error("Authentication failed during the request interception", e);
+                } finally {
+                    authorizationLock.unlock();
                 }
+            } else if (authorizationLock.isLocked() && response.getRawStatusCode() == 403){
+                try {
+                    Thread.sleep(5000);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+                return execution.execute(request, body);
             }
             return response;
         }
     }
-
+    /**
+     * ISO8601 Date format to use for datetime monitored properties
+     * */
+    DateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm");
+    /**
+     * VideoOS API polling interval. API requests will be performed once per this period of time.
+     * */
+    private int apiPollingInterval = 60000;
+    /**
+     * Last registered monitoring cycle timestamp (full monitoring cycle, with all the latest data delieved)
+     * */
+    private long lastMonitoredDataCollectionTimestamp = 0L;
     /**
      * A number of attempts to perform for getting the conference (call) status while performing
      * {@link #dial(DialDevice)} operation
@@ -188,7 +230,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     /**
      * Session Id used for authorization
      */
-    private String sessionId;
+    private volatile String sessionId;
     /**
      * Grace period for device reboot action. It takes about 3 minutes for the device to get fully
      * functional after reboot is triggered
@@ -211,15 +253,32 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private Boolean simulatedDeviceMode = false;
 
     private final ReentrantLock controlOperationsLock = new ReentrantLock();
-    private ExtendedStatistics localStatistics;
-    private EndpointStatistics localEndpointStatistics;
+    private final ReentrantLock httpRequestLock = new ReentrantLock();
+    private final ReentrantLock authorizationLock = new ReentrantLock();
 
+    private final ExtendedStatistics localStatistics = new ExtendedStatistics();
+    private final EndpointStatistics localEndpointStatistics = new EndpointStatistics();
+
+    private ExecutorService executorService;
+    private final Map<String, Future<?>> polyAPICallFutureList = new HashMap<>();
+
+    private boolean failedLogin = false;
+    private APIStateReportHandler apiStateReportHandler;
     /**
      * List of property groups to display
      *
      * @since 1.1.0
      * */
-    private List<String> displayPropertyGroups = Collections.singletonList("All");
+    private List<String> displayPropertyGroups = new ArrayList<>(Arrays.asList("All"));
+    /**
+     * Property group presets, that imply only including certain parts of the API, without diving into
+     * details of "what is it that we need". This setting overrides {@link #displayPropertyGroups}
+     * Default: {@link #displayPropertyGroups} listings
+     * DeviceMode:
+     * AppMode:
+     * @since 1.1.1
+     * */
+    private String displayPropertyGroupsPreset = "Default";
     /**
      * Currently selected application name
      *
@@ -233,6 +292,43 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      */
     public PolycomVideoOS() {
         setTrustAllCertificates(true);
+        executorService = Executors.newFixedThreadPool(15);
+    }
+
+    /**
+     * Retrieves {@link #displayPropertyGroupsPreset}
+     *
+     * @return value of {@link #displayPropertyGroupsPreset}
+     */
+    public String getDisplayPropertyGroupsPreset() {
+        return displayPropertyGroupsPreset;
+    }
+
+    /**
+     * Sets {@link #displayPropertyGroupsPreset} value
+     *
+     * @param displayPropertyGroupsPreset new value of {@link #displayPropertyGroupsPreset}
+     */
+    public void setDisplayPropertyGroupsPreset(String displayPropertyGroupsPreset) {
+        this.displayPropertyGroupsPreset = displayPropertyGroupsPreset;
+    }
+
+    /**
+     * Retrieves {@link #apiPollingInterval}
+     *
+     * @return value of {@link #apiPollingInterval}
+     */
+    public int getApiPollingInterval() {
+        return apiPollingInterval;
+    }
+
+    /**
+     * Sets {@link #apiPollingInterval} value
+     *
+     * @param apiPollingInterval new value of {@link #apiPollingInterval}
+     */
+    public void setApiPollingInterval(int apiPollingInterval) {
+        this.apiPollingInterval = apiPollingInterval;
     }
 
     /**
@@ -296,10 +392,60 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     @Override
     protected void internalInit() throws Exception {
         super.internalInit();
+        apiStateReportHandler = new APIStateReportHandler();
 
         adapterInitializationTimestamp = System.currentTimeMillis();
         adapterProperties = new Properties();
         adapterProperties.load(getClass().getResourceAsStream("/version.properties"));
+
+        switch (displayPropertyGroupsPreset) {
+            case "Default":
+                if (logger.isDebugEnabled()) {
+                    logger.debug("displayPropertyGroupsPreset is set to DEFAULT: using following set of property groups: " + displayPropertyGroups);
+                }
+                break;
+            case "AppMode":
+                displayPropertyGroups.clear();
+                displayPropertyGroups.add(Constant.PropertyGroup.SYSTEM_STATUS);
+                displayPropertyGroups.add(Constant.PropertyGroup.COLLABORATION_STATUS);
+                displayPropertyGroups.add(Constant.PropertyGroup.SYSTEM);
+                displayPropertyGroups.add(Constant.PropertyGroup.APPLICATIONS);
+                displayPropertyGroups.add(Constant.PropertyGroup.SESSIONS);
+                displayPropertyGroups.add(Constant.PropertyGroup.MICROPHONES);
+                displayPropertyGroups.add(Constant.PropertyGroup.AUDIO_STATUS);
+                displayPropertyGroups.add(Constant.PropertyGroup.SOFTWARE_MODE);
+                displayPropertyGroups.add(Constant.PropertyGroup.AUDIO_MUTE);
+                break;
+            case "DeviceMode":
+                displayPropertyGroups.clear();
+                displayPropertyGroups.add(Constant.PropertyGroup.SYSTEM_STATUS);
+                displayPropertyGroups.add(Constant.PropertyGroup.SYSTEM);
+                displayPropertyGroups.add(Constant.PropertyGroup.APPLICATIONS);
+                displayPropertyGroups.add(Constant.PropertyGroup.SESSIONS);
+                displayPropertyGroups.add(Constant.PropertyGroup.MICROPHONES);
+                displayPropertyGroups.add(Constant.PropertyGroup.AUDIO_STATUS);
+                displayPropertyGroups.add(Constant.PropertyGroup.SOFTWARE_MODE);
+                displayPropertyGroups.add(Constant.PropertyGroup.PERIPHERALS);
+                displayPropertyGroups.add(Constant.PropertyGroup.VOLUME);
+                displayPropertyGroups.add(Constant.PropertyGroup.AUDIO_MUTE);
+                break;
+            default:
+                logger.warn(String.format("Unsupported displayPropertyGroupsPreset: %s. Switching to Default.", displayPropertyGroupsPreset));
+                break;
+        }
+    }
+
+    @Override
+    protected void internalDestroy() {
+        adapterProperties = null;
+        if (executorService != null) {
+            executorService.shutdownNow();
+            executorService = null;
+        }
+        polyAPICallFutureList.forEach((s, future) -> future.cancel(true));
+        polyAPICallFutureList.clear();
+
+        super.internalDestroy();
     }
 
     /**
@@ -587,13 +733,20 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         ExtendedStatistics extendedStatistics = new ExtendedStatistics();
         EndpointStatistics endpointStatistics = new EndpointStatistics();
 
+        if (localStatistics.getStatistics() == null) {
+            localStatistics.setStatistics(new ConcurrentHashMap<>());
+        }
+        final Map<String, String> statistics = localStatistics.getStatistics();
         controlOperationsLock.lock();
         try {
-            if (isValidControlCoolDown() && localStatistics != null && localEndpointStatistics != null) {
+            boolean validMonitoredDataCollectionInterval = (System.currentTimeMillis() - lastMonitoredDataCollectionTimestamp) >= apiPollingInterval;
+
+            if (isValidControlCoolDown() || !validMonitoredDataCollectionInterval) {
                 if (logger.isDebugEnabled()) {
                     logger.debug("Device is occupied. Skipping statistics refresh call.");
                 }
-                extendedStatistics.setStatistics(localStatistics.getStatistics());
+                collectAdapterMetadata(statistics);
+                extendedStatistics.setStatistics(statistics);
                 extendedStatistics.setControllableProperties(localStatistics.getControllableProperties());
 
                 endpointStatistics.setInCall(localEndpointStatistics.isInCall());
@@ -601,125 +754,191 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 endpointStatistics.setVideoChannelStats(localEndpointStatistics.getVideoChannelStats());
                 endpointStatistics.setAudioChannelStats(localEndpointStatistics.getAudioChannelStats());
                 endpointStatistics.setRegistrationStatus(localEndpointStatistics.getRegistrationStatus());
-
                 return Arrays.asList(extendedStatistics, endpointStatistics);
             }
+            collectAdapterMetadata(statistics);
+            if (localStatistics.getControllableProperties() == null) {
+                localStatistics.setControllableProperties(new ArrayList<>());
+            }
+            List<AdvancedControllableProperty> controls = localStatistics.getControllableProperties();
 
-            Map<String, String> statistics = new HashMap<>();
+            processAsyncAPIRequest(Constant.PropertyGroup.SYSTEM_STATUS, () -> retrieveSystemStatus(statistics));
+            processAsyncAPIRequest(Constant.PropertyGroup.SYSTEM, () -> retrieveSystemInfo(statistics));
+            processAsyncAPIRequest(Constant.PropertyGroup.COMMUNICATION_PROTOCOLS, () -> retrieveCommunicationProtocolsInfo(statistics));
+            processAsyncAPIRequest(Constant.PropertyGroup.APPLICATIONS, () -> retrieveApplications(statistics, controls));
+            processAsyncAPIRequest(Constant.PropertyGroup.SESSIONS, () -> retrieveSessions(statistics));
+            processAsyncAPIRequest(Constant.PropertyGroup.MICROPHONES, () -> retrieveMicrophonesStatistics(statistics));
+            processAsyncAPIRequest(Constant.PropertyGroup.CONTENT_STATUS, () -> retrieveContentStatus(statistics));
+            processAsyncAPIRequest(Constant.PropertyGroup.CONFERENCING_CAPABILITIES, () -> retrieveConferencingCapabilities(statistics));
+            processAsyncAPIRequest(Constant.PropertyGroup.AUDIO_STATUS, () -> retrieveAudioStatus(statistics));
+            processAsyncAPIRequest(Constant.PropertyGroup.COLLABORATION_STATUS, () -> retrieveCollaborationStatus(statistics));
+            processAsyncAPIRequest(Constant.PropertyGroup.SOFTWARE_MODE, () -> retrieveSoftwareModeStatus(statistics, controls));
+            processAsyncAPIRequest(Constant.PropertyGroup.PERIPHERALS, () -> retrievePeripheralsInformation(statistics));
+            processAsyncAPIRequest(Constant.PropertyGroup.VOLUME, () -> {
+                Integer volumeLevel = retrieveVolumeLevel();
+                statistics.remove(Constant.Property.CONTROL_AUDIO_VOLUME);
+                if (volumeLevel != null) {
+                    statistics.put(Constant.Property.CONTROL_AUDIO_VOLUME, String.valueOf(volumeLevel));
+                    addControllableProperty(controls, createSlider(Constant.Property.CONTROL_AUDIO_VOLUME, 0.0f, 100.0f, Float.valueOf(volumeLevel)));
+                }
+            });
+            processAsyncAPIRequest(Constant.PropertyGroup.VIDEO_MUTE, () -> {
+                Boolean videoMuteStatus = retrieveVideoMuteStatus();
+                statistics.remove(Constant.Property.CONTROL_MUTE_VIDEO);
+                if (videoMuteStatus != null) {
+                    int value = retrieveVideoMuteStatus() ? 1 : 0;
+                    statistics.put(Constant.Property.CONTROL_MUTE_VIDEO, String.valueOf(value));
+                    addControllableProperty(controls, createSwitch(Constant.Property.CONTROL_MUTE_VIDEO, value));
+                }
+            });
+            processAsyncAPIRequest(Constant.PropertyGroup.AUDIO_MUTE, () -> {
+                int value = Objects.equals(retrieveMuteStatus(), MuteStatus.Muted) ? 1 : 0;
+                statistics.put(Constant.Property.CONTROL_MUTE_MICROPHONES, String.valueOf(value));
+                addControllableProperty(controls, createSwitch(Constant.Property.CONTROL_MUTE_MICROPHONES, value));
+            });
 
-            statistics.put(Constant.Property.ADAPTER_VERSION, adapterProperties.getProperty("adapter.version"));
-            statistics.put(Constant.Property.ADAPTER_BUILD_DATE, adapterProperties.getProperty("adapter.build.date"));
+            processAsyncAPIRequest(Constant.PropertyGroup.CONFERENCES, () -> {
+                CallConnectionData connectionData = retrieveActiveConferenceCallStatistics(statistics);
+                Integer conferenceId = connectionData.getConferenceId();
+                boolean validConferenceId = conferenceId != null && conferenceId > -1;
 
-            long adapterUptime = System.currentTimeMillis() - adapterInitializationTimestamp;
-            statistics.put(Constant.Property.ADAPTER_UPTIME_MIN, String.valueOf(adapterUptime / (1000*60)));
-            statistics.put(Constant.Property.ADAPTER_UPTIME, normalizeUptime(adapterUptime/1000));
+                localEndpointStatistics.setInCall(validConferenceId);
+                localEndpointStatistics.setRegistrationStatus(retrieveRegistrationStatus());
+                if (validConferenceId) {
+                    CallStats callStats = new CallStats();
+                    callStats.setProtocol(statistics.get("ActiveConference#Connection1Type"));
+                    callStats.setRequestedCallRate(defaultCallRate);
 
-            List<AdvancedControllableProperty> controls = new ArrayList<>();
+                    AudioChannelStats audioChannelStats = new AudioChannelStats();
+                    VideoChannelStats videoChannelStats = new VideoChannelStats();
+                    ContentChannelStats contentChannelStats = new ContentChannelStats();
 
-            boolean showAllGroups = displayPropertyGroups.contains("All");
-            if(showAllGroups || displayPropertyGroups.contains("SystemStatus")) {
-                retrieveSystemStatus(statistics);
-            }
-            if(showAllGroups || displayPropertyGroups.contains("System")) {
-                retrieveSystemInfo(statistics);
-            }
-            if(showAllGroups || displayPropertyGroups.contains("CommunicationProtocols")) {
-                retrieveCommunicationProtocolsInfo(statistics);
-            }
-            if(showAllGroups || displayPropertyGroups.contains("Applications")) {
-                retrieveApplications(statistics, controls);
-            }
-            if(showAllGroups || displayPropertyGroups.contains("Sessions")) {
-                retrieveSessions(statistics);
-            }
-            if(showAllGroups || displayPropertyGroups.contains("Microphones")) {
-                retrieveMicrophonesStatistics(statistics);
-            }
-            if(showAllGroups || displayPropertyGroups.contains("ContentStatus")) {
-                retrieveContentStatus(statistics);
-            }
-            if(showAllGroups || displayPropertyGroups.contains("ConferencingCapabilities")) {
-                retrieveConferencingCapabilities(statistics);
-            }
-            if(showAllGroups || displayPropertyGroups.contains("AudioStatus")) {
-                retrieveAudioStatus(statistics);
-            }
-            if(showAllGroups || displayPropertyGroups.contains("CollaborationStatus")) {
-                retrieveCollaborationStatus(statistics);
-            }
-            if(showAllGroups || displayPropertyGroups.contains("SoftwareMode")) {
-                retrieveSoftwareModeStatus(statistics, controls);
-            }
-            if(showAllGroups || displayPropertyGroups.contains("Peripherals")) {
-                retrievePeripheralsInformation(statistics);
-            }
+                    ArrayNode conferenceCallMediaStats = retrieveConferenceCallMediaStats(conferenceId);
+                    processConferenceCallMediaStats(conferenceCallMediaStats, audioChannelStats, videoChannelStats, callStats);
+                    retrieveSharedMediaStats(contentChannelStats);
 
-            Integer volumeLevel = retrieveVolumeLevel();
-            if (volumeLevel != null) {
-                statistics.put(Constant.Property.CONTROL_AUDIO_VOLUME, "");
-                controls.add(createSlider(Constant.Property.CONTROL_AUDIO_VOLUME, 0.0f, 100.0f, Float.valueOf(volumeLevel)));
-            }
-            Boolean videoMuteStatus = retrieveVideoMuteStatus();
-            if (videoMuteStatus != null) {
-                statistics.put(Constant.Property.CONTROL_MUTE_VIDEO, "");
-                controls.add(createSwitch(Constant.Property.CONTROL_MUTE_VIDEO, retrieveVideoMuteStatus() ? 1 : 0));
-            }
-            statistics.put(Constant.Property.CONTROL_MUTE_MICROPHONES, "");
-            controls.add(createSwitch(Constant.Property.CONTROL_MUTE_MICROPHONES, Objects.equals(retrieveMuteStatus(), MuteStatus.Muted) ? 1 : 0));
-            statistics.put(Constant.Property.CONTROL_REBOOT, "");
-            controls.add(createButton(Constant.Property.CONTROL_REBOOT, Constant.Property.CONTROL_REBOOT, "Rebooting...", REBOOT_GRACE_PERIOD_MS));
+                    String dialString = retrieveDeviceDialString();
 
-            extendedStatistics.setStatistics(statistics);
-            extendedStatistics.setControllableProperties(controls);
+                    callStats.setCallId(buildCallId(conferenceId, connectionData.getCallId(), connectionData.getStartDate(), dialString));
+                    callStats.setRemoteAddress(dialString);
 
-            CallConnectionData connectionData = retrieveActiveConferenceCallStatistics(statistics);
-            Integer conferenceId = connectionData.getConferenceId();
-            boolean validConferenceId = conferenceId != null && conferenceId > -1;
+                    localEndpointStatistics.setCallStats(callStats);
+                    localEndpointStatistics.setAudioChannelStats(audioChannelStats);
+                    localEndpointStatistics.setVideoChannelStats(videoChannelStats);
+                    localEndpointStatistics.setContentChannelStats(contentChannelStats);
+                }
+            });
 
-            endpointStatistics.setInCall(validConferenceId);
-            endpointStatistics.setRegistrationStatus(retrieveRegistrationStatus());
-            if (validConferenceId) {
-                CallStats callStats = new CallStats();
-                callStats.setProtocol(statistics.get("ActiveConference#Connection1Type"));
-                callStats.setRequestedCallRate(defaultCallRate);
+            statistics.put(Constant.Property.CONTROL_REBOOT, Constant.Values.N_A);
+            addControllableProperty(controls, createButton(Constant.Property.CONTROL_REBOOT, Constant.Property.CONTROL_REBOOT, "Rebooting...", REBOOT_GRACE_PERIOD_MS));
+            statistics.put(Constant.Property.ADAPTER_MONITORING_CYCLE_TIMESTAMP, dateFormat.format(new Date()));
 
-                AudioChannelStats audioChannelStats = new AudioChannelStats();
-                VideoChannelStats videoChannelStats = new VideoChannelStats();
-                ContentChannelStats contentChannelStats = new ContentChannelStats();
-
-                ArrayNode conferenceCallMediaStats = retrieveConferenceCallMediaStats(conferenceId);
-                processConferenceCallMediaStats(conferenceCallMediaStats, audioChannelStats, videoChannelStats, callStats);
-                retrieveSharedMediaStats(contentChannelStats);
-
-                String dialString = retrieveDeviceDialString();
-
-                callStats.setCallId(buildCallId(conferenceId, connectionData.getCallId(), connectionData.getStartDate(), dialString));
-                callStats.setRemoteAddress(dialString);
-
-                endpointStatistics.setCallStats(callStats);
-                endpointStatistics.setAudioChannelStats(audioChannelStats);
-                endpointStatistics.setVideoChannelStats(videoChannelStats);
-                endpointStatistics.setContentChannelStats(contentChannelStats);
-            }
-            localStatistics = extendedStatistics;
-            localEndpointStatistics = endpointStatistics;
+            extendedStatistics.setStatistics(new HashMap<>(statistics));
+            extendedStatistics.setControllableProperties(new ArrayList<>(controls));
         } finally {
             controlOperationsLock.unlock();
         }
+        endpointStatistics.setInCall(localEndpointStatistics.isInCall());
+        endpointStatistics.setCallStats(localEndpointStatistics.getCallStats());
+        endpointStatistics.setVideoChannelStats(localEndpointStatistics.getVideoChannelStats());
+        endpointStatistics.setAudioChannelStats(localEndpointStatistics.getAudioChannelStats());
+        endpointStatistics.setRegistrationStatus(localEndpointStatistics.getRegistrationStatus());
 
+        lastMonitoredDataCollectionTimestamp = System.currentTimeMillis();
+
+        if (failedLogin) {
+            throw new FailedLoginException("Authentication failed, please check device credentials.");
+        }
+        apiStateReportHandler.verifyAPIState();
         return Arrays.asList(extendedStatistics, endpointStatistics);
+    }
+
+    /**
+     * Add controllable property to the AdvancedControllableProperty list, to avoid duplicates (by name).
+     * New entries will replace old ones
+     *
+     * @param controls list of controls to add new control to
+     * @param control a controllable property that will be added to the list
+     * */
+    private void addControllableProperty(List<AdvancedControllableProperty> controls, AdvancedControllableProperty control) {
+        if (control == null) {
+            if (logger.isWarnEnabled()) {
+                logger.warn("Unable to add controllable property to the list: null.");
+            }
+            return;
+        }
+        controls.removeIf(controllableProperty -> controllableProperty.getName().equals(control.getName()));
+        controls.add(control);
+    }
+
+    @Override
+    protected <Request, Response> Response doPost(String uri, Request data, Class<Response> responseClass) throws Exception {
+        httpRequestLock.lock();
+        try {
+            return super.doPost(uri, data, responseClass);
+        } finally {
+            httpRequestLock.unlock();
+        }
     }
 
     @Override
     protected <Response> Response doGet(String uri, Class<Response> responseClass) throws Exception {
+        httpRequestLock.lock();
         try {
             return super.doGet(uri, responseClass);
         } catch (CommandFailureException cfe) {
             logger.error("Exception while executing command: " + uri, cfe);
             return null;
+        } finally {
+            httpRequestLock.unlock();
         }
     }
 
+    /**
+     * Process async API request
+     * - Check if property group is enabled
+     * - Check if future exists/is done
+     * - If future does not exist or is done - make a call, referenced in {@code process}
+     *
+     * @param apiSection property group related to the API section to process
+     * @param process AsyncProcess reference with API request method in it
+     * */
+    private void processAsyncAPIRequest(String apiSection, AsyncProcess process) throws Exception {
+        if(!displayPropertyGroups.contains("All") && !displayPropertyGroups.contains(apiSection)) {
+            logger.debug(apiSection + " property group is disabled, skipping.");
+            return;
+        }
+        Future<?> futureRef = polyAPICallFutureList.get(apiSection);
+
+        if (futureRef == null || futureRef.isDone()) {
+            futureRef = executorService.submit(() -> {
+                try {
+                    process.execute();
+                    apiStateReportHandler.resolveError(apiSection);
+                } catch (Exception e) {
+                    apiStateReportHandler.pushError(apiSection, e);
+                    logger.warn(String.format("Unable to retrieve Poly %s.", apiSection), e);
+                }
+            });
+            polyAPICallFutureList.put(apiSection, futureRef);
+        } else {
+            logger.warn(String.format("Operation %s is still in progress. Not issuing new request, waiting for the old one to complete.", apiSection));
+        }
+    }
+    /**
+     * Collect adapter metadata - both from .properties file (version, build date) and based on the {@link #adapterInitializationTimestamp}
+     *
+     * @param statistics current statistics map to put data to
+     * */
+    private void collectAdapterMetadata(Map<String, String> statistics) {
+        statistics.put(Constant.Property.ADAPTER_VERSION, adapterProperties.getProperty("adapter.version"));
+        statistics.put(Constant.Property.ADAPTER_BUILD_DATE, adapterProperties.getProperty("adapter.build.date"));
+
+        long adapterUptime = System.currentTimeMillis() - adapterInitializationTimestamp;
+        statistics.put(Constant.Property.ADAPTER_UPTIME_MIN, String.valueOf(adapterUptime / (1000*60)));
+        statistics.put(Constant.Property.ADAPTER_UPTIME, normalizeUptime(adapterUptime/1000));
+        statistics.put(Constant.Property.ADAPTER_PROPERTY_GROUPS, String.join(", ", displayPropertyGroups));
+    }
     /**
      * Check whether the device is in the device mode now
      *
@@ -746,9 +965,13 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @since 1.0.4
      * */
     private void retrievePeripheralsInformation(Map<String, String> statistics) {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Retrieving device peripherals information.");
+        }
         ArrayNode response;
         try {
             response = doPost(Constant.URI.PERIPHERAL_DEVICES, null, ArrayNode.class);
+            statistics.keySet().removeIf(s -> s.startsWith("Peripherals["));
         } catch (Exception e) {
             logger.error("Unable to retrieve peripheral devices information.", e);
             return;
@@ -893,7 +1116,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         if (statistics == null) {
             statistics = new HashMap<>();
         }
-        statistics.put(Constant.Property.APPLICATIONS_SAVE_PROVIDER, "Save");
+        statistics.put(Constant.Property.APPLICATIONS_SAVE_PROVIDER, Constant.Values.N_A);
         controllableProperties.add(createButton(Constant.Property.APPLICATIONS_SAVE_PROVIDER, "Save", "Saving", 180000L));
     }
 
@@ -987,9 +1210,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         RegistrationStatus registrationStatus = null;
         Boolean deviceMode = retrieveDeviceMode();
         if (deviceMode != null && deviceMode) {
-            if (localEndpointStatistics != null) {
-                registrationStatus = localEndpointStatistics.getRegistrationStatus();
-            }
+            registrationStatus = localEndpointStatistics.getRegistrationStatus();
             if (logger.isDebugEnabled()) {
                 logger.debug("The codec is in the device mode. Skipping registration status retrieval, falling back to the cached values");
             }
@@ -1051,7 +1272,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             if (logger.isDebugEnabled()) {
                 logger.debug("Unable to retrieve video mute status.");
             }
-            return null;
+            return false;
         }
         return getJsonProperty(response, "result", Boolean.class);
     }
@@ -1226,6 +1447,11 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication, except 403
      */
     private void retrieveSoftwareModeStatus(Map<String, String> statistics, List<AdvancedControllableProperty> controllableProperties) throws Exception {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Retrieving device software mode status.");
+        }
+        statistics.remove(Constant.Property.DEVICE_MODE_LABEL);
+        statistics.remove(Constant.Property.SIGNAGE_MODE_LABEL);
         Boolean deviceMode = retrieveDeviceMode();
         if (deviceMode != null) {
             statistics.put(Constant.Property.DEVICE_MODE_LABEL, String.valueOf(deviceMode));
@@ -1246,7 +1472,11 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication, except 403
      */
     private void retrieveSystemStatus(Map<String, String> statistics) throws Exception {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Retrieving device system status information.");
+        }
         ArrayNode response = doGet(Constant.URI.STATUS, ArrayNode.class);
+        statistics.keySet().removeIf(s -> s.startsWith(Constant.Property.SYSTEM_STATUS_GROUP_LABEL));
         if (response == null || response.isNull()) {
             if (logger.isDebugEnabled()) {
                 logger.debug("Unable to retrieve device system status.");
@@ -1368,13 +1598,22 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private void retrieveCollaborationStatus(Map<String, String> statistics) throws Exception {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Retrieving device collaboration status.");
+        }
         JsonNode response = doGet(Constant.URI.COLLABORATION, JsonNode.class);
-        if (response != null && !response.isNull()) {
-            String sessionState = getJsonProperty(response, "state", String.class);
-            statistics.put(Constant.Property.COLLABORATION_SESSION_STATE_LABEL, sessionState);
-            if ("ACTIVE".equals(sessionState)) {
-                statistics.put(Constant.Property.COLLABORATION_SESSION_ID_LABEL, getJsonProperty(response, "id", String.class));
+        statistics.remove(Constant.Property.COLLABORATION_SESSION_STATE_LABEL);
+        statistics.remove(Constant.Property.COLLABORATION_SESSION_ID_LABEL);
+        if (response == null || response.isNull()) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("Unable to retrieve collaboration status.");
             }
+            return;
+        }
+        String sessionState = getJsonProperty(response, "state", String.class);
+        statistics.put(Constant.Property.COLLABORATION_SESSION_STATE_LABEL, sessionState);
+        if ("ACTIVE".equals(sessionState)) {
+            statistics.put(Constant.Property.COLLABORATION_SESSION_ID_LABEL, getJsonProperty(response, "id", String.class));
         }
     }
 
@@ -1436,7 +1675,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         statistics.put(Constant.Property.ACTIVE_CONFERENCE_ID_LABEL, getJsonProperty(activeConference, "id", String.class));
         Long conferenceStartTimestamp = getJsonProperty(activeConference, "startTime", Long.class);
         if (null != conferenceStartTimestamp) {
-            statistics.put(Constant.Property.ACTIVE_CONFERENCE_START_TIME_LABEL, String.valueOf(new Date(conferenceStartTimestamp)));
+            statistics.put(Constant.Property.ACTIVE_CONFERENCE_START_TIME_LABEL, dateFormat.format(new Date(conferenceStartTimestamp)));
         }
 
         // Adding i+1 instead of i so terminals and connections are listed starting with 1, not 0
@@ -1552,8 +1791,20 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private void retrieveSystemInfo(Map<String, String> statistics) throws Exception {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Retrieving device system information.");
+        }
         JsonNode response = doGet(Constant.URI.SYSTEM, JsonNode.class);
 
+        statistics.remove(Constant.Property.SYSTEM_SERIAL_NUMBER_LABEL);
+        statistics.remove(Constant.Property.SYSTEM_SOFTWARE_VERSION_LABEL);
+        statistics.remove(Constant.Property.SYSTEM_STATE_LABEL);
+        statistics.remove(Constant.Property.SYSTEM_NAME_LABEL);
+        statistics.remove(Constant.Property.SYSTEM_BUILD_LABEL);
+        statistics.remove(Constant.Property.SYSTEM_REBOOT_NEEDED_LABEL);
+        statistics.remove(Constant.Property.SYSTEM_DEVICE_MODEL_LABEL);
+        statistics.remove(Constant.Property.SYSTEM_HARDWARE_VERSION_LABEL);
+        statistics.remove(Constant.Property.SYSTEM_UPTIME_LABEL);
         if (response == null || response.isNull()) {
             if (logger.isDebugEnabled()) {
                 logger.debug("Cannot retrieve system information.");
@@ -1572,6 +1823,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
         JsonNode lanStatus = response.get("lanStatus");
         if (lanStatus == null) {
+            statistics.keySet().remove(Constant.Property.LAN_STATUS_DUPLEX_LABEL);
+            statistics.keySet().remove(Constant.Property.LAN_STATUS_SPEED_LABEL);
+            statistics.keySet().remove(Constant.Property.LAN_STATUS_STATE_LABEL);
             return;
         }
         addStatisticsProperty(statistics, Constant.Property.LAN_STATUS_DUPLEX_LABEL, lanStatus.get("duplex"));
@@ -1586,9 +1840,15 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private void retrieveCommunicationProtocolsInfo(Map<String, String> statistics) throws Exception {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Retrieving device communication protocols information.");
+        }
         JsonNode configResponse = doPost(Constant.URI.CONFIG,
                 new AbstractMap.SimpleEntry("names", Arrays.asList(Constant.Property.REST_KEY_H323_EXTENSION, Constant.Property.REST_KEY_H323_NAME, Constant.Property.REST_KEY_SIP_USERNAME)), JsonNode.class);
 
+        statistics.remove(Constant.Property.SYSTEM_SIP_USERNAME_LABEL);
+        statistics.remove(Constant.Property.SYSTEM_H323_NAME_LABEL);
+        statistics.remove(Constant.Property.SYSTEM_H323_EXTENSION_LABEL);
         if (configResponse == null || configResponse.isNull()) {
             if (logger.isDebugEnabled()) {
                 logger.debug("Cannot retrieve configuration data.");
@@ -1613,8 +1873,12 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private void retrieveApplications(Map<String, String> statistics, List<AdvancedControllableProperty> controls) throws Exception {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Retrieving device applications information.");
+        }
         JsonNode response = doGet(Constant.URI.APPS, JsonNode.class);
         JsonNode systemAppsResponse = doGet(Constant.URI.SYSTEM_APPS, JsonNode.class);
+        statistics.keySet().removeIf(s -> s.startsWith(Constant.Property.APPLICATIONS_GROUP_LABEL));
 
         if (response == null || response.isNull()) {
             if (logger.isDebugEnabled()) {
@@ -1640,7 +1904,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             Long currentLastUpdatedOn = getJsonProperty(node, "lastUpdatedOn", Long.class);
             if (currentLastUpdatedOn != null) {
                 statistics.put(String.format(Constant.Property.APPLICATIONS_LAST_UPDATED_LABEL, appName),
-                        new Date(currentLastUpdatedOn).toString());
+                        dateFormat.format(new Date(currentLastUpdatedOn)));
                 if (currentLastUpdatedOn > lastUpdatedOn) {
                     currentApp = appNameRaw;
                     lastUpdatedOn = currentLastUpdatedOn;
@@ -1650,7 +1914,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         if (StringUtils.isNotNullOrEmpty(selectedApp)) {
             currentApp = selectedApp;
             statistics.put(Constant.Property.APPLICATIONS_SAVE_PROVIDER, "Save");
-            controls.add(createButton(Constant.Property.APPLICATIONS_SAVE_PROVIDER, "Save", "Saving", 120000L));
+            addControllableProperty(controls, createButton(Constant.Property.APPLICATIONS_SAVE_PROVIDER, "Save", "Saving", 120000L));
         } else {
             controls.removeIf(controllableProperty -> controllableProperty.getName().equals(Constant.Property.APPLICATIONS_SAVE_PROVIDER));
             statistics.remove(Constant.Property.APPLICATIONS_SAVE_PROVIDER);
@@ -1659,7 +1923,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             appNames.add(getJsonProperty(node, "appName", String.class));
         }
         statistics.put(Constant.Property.APPLICATIONS_PROVIDER, currentApp);
-        controls.add(createDropdown(Constant.Property.APPLICATIONS_PROVIDER, appNames, currentApp));
+        addControllableProperty(controls, createDropdown(Constant.Property.APPLICATIONS_PROVIDER, appNames, currentApp));
     }
 
     /**
@@ -1669,7 +1933,11 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private void retrieveSessions(Map<String, String> statistics) throws Exception {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Retrieving device sessions information.");
+        }
         JsonNode response = doGet(Constant.URI.SESSIONS, JsonNode.class);
+        statistics.keySet().removeIf(s -> s.startsWith(Constant.Property.ACTIVE_SESSIONS_GROUP_LABEL));
         if (response == null || response.isNull()) {
             if (logger.isDebugEnabled()) {
                 logger.debug("Cannot retrieve sessions information.");
@@ -1678,6 +1946,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
         JsonNode sessionList = response.get("sessionList");
         if (sessionList == null) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("Cannot retrieve sessions information: sessionList is empty.");
+            }
             return;
         }
 
@@ -1703,7 +1974,11 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private void retrieveMicrophonesStatistics(Map<String, String> statistics) throws Exception {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Retrieving device microphones information.");
+        }
         ArrayNode response = doGet(Constant.URI.MICROPHONES, ArrayNode.class);
+        statistics.keySet().removeIf(s -> s.startsWith(Constant.Property.MICROPHONES_GROUP_LABEL));
         if (response == null) {
             if (logger.isDebugEnabled()) {
                 logger.debug("Cannot retrieve Microphones data.");
@@ -1734,10 +2009,19 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private void retrieveContentStatus(Map<String, String> statistics) throws Exception {
-        String response = doGet(Constant.URI.CONTENT_STATUS, String.class);
-        if (response != null) {
-            statistics.put(Constant.Property.CAMERAS_CONTENT_STATUS, response);
+        if (logger.isDebugEnabled()) {
+            logger.debug("Retrieving device content status information.");
         }
+        String response = doGet(Constant.URI.CONTENT_STATUS, String.class);
+        statistics.remove(Constant.Property.CAMERAS_CONTENT_STATUS);
+        if (response == null) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("Cannot retrieve ContentStatus data.");
+            }
+            return;
+        }
+
+        statistics.put(Constant.Property.CAMERAS_CONTENT_STATUS, response);
     }
 
     /**
@@ -1747,7 +2031,13 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private void retrieveConferencingCapabilities(Map<String, String> statistics) throws Exception {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Retrieving device conferencing capabilities.");
+        }
         JsonNode response = doGet(Constant.URI.CONFERENCING_CAPABILITIES, JsonNode.class);
+        statistics.remove(Constant.Property.CONFERENCING_CAPABILITIES_BLAST_DIAL);
+        statistics.remove(Constant.Property.CONFERENCING_CAPABILITIES_AUDIO_CALL);
+        statistics.remove(Constant.Property.CONFERENCING_CAPABILITIES_VIDEO_CALL);
         if (response == null) {
             if (logger.isDebugEnabled()) {
                 logger.debug("Cannot retrieve conferencing capabilities.");
@@ -1766,7 +2056,12 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * @throws Exception during http communication
      */
     private void retrieveAudioStatus(Map<String, String> statistics) throws Exception {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Retrieving device audio status.");
+        }
         JsonNode response = doGet(Constant.URI.AUDIO, JsonNode.class);
+        statistics.remove(Constant.Property.AUDIO_MUTE_LOCKED_LABEL);
+        statistics.remove(Constant.Property.AUDIO_MICROPHONES_CONNECTED);
         if (response == null || response.isNull()) {
             if (logger.isDebugEnabled()) {
                 logger.debug("Cannot retrieve audio status.");
@@ -1818,7 +2113,11 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             return null;
         }
         if (type.equals(String.class)) {
-            return (T) value.asText();
+            String strValue = value.asText();
+            if (Objects.equals("NA", strValue) || StringUtils.isNullOrEmpty(strValue)) {
+                return (T) Constant.Values.N_A;
+            }
+            return (T) strValue;
         } else if (type.equals(Integer.class)) {
             return (T) Integer.valueOf(value.asInt());
         } else if (type.equals(Boolean.class)) {
@@ -1839,7 +2138,6 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         ObjectNode request = JsonNodeFactory.instance.objectNode();
         request.put("user", getLogin());
         request.put("password", getPassword());
-
         JsonNode json = doPost(Constant.URI.SESSION, request, JsonNode.class);
 
         Boolean success = getJsonProperty(json, "success", Boolean.class);
