@@ -764,6 +764,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
             processAsyncAPIRequest(Constant.PropertyGroup.SYSTEM_STATUS, () -> retrieveSystemStatus(statistics));
             processAsyncAPIRequest(Constant.PropertyGroup.SYSTEM, () -> retrieveSystemInfo(statistics));
+            processAsyncAPIRequest(Constant.PropertyGroup.CALENDAR, () -> retrieveCalendarInfo(statistics));
             processAsyncAPIRequest(Constant.PropertyGroup.COMMUNICATION_PROTOCOLS, () -> retrieveCommunicationProtocolsInfo(statistics));
             processAsyncAPIRequest(Constant.PropertyGroup.APPLICATIONS, () -> retrieveApplications(statistics, controls));
             processAsyncAPIRequest(Constant.PropertyGroup.SESSIONS, () -> retrieveSessions(statistics));
@@ -1785,6 +1786,30 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     }
 
     /**
+     * Retrieve calendar status and information about calendar entries, starting from current time.
+     * The goal is to get inCall status of teams/zoom/etc modes
+     *
+     * @param statistics monitored properties map
+     * @throws Exception if a communication error occurs
+     * */
+    private void retrieveCalendarInfo(Map<String, String> statistics) throws Exception {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Retrieving calendar information.");
+        }
+        JsonNode calendarStatus = doGet(Constant.URI.CALENDAR_STATUS, JsonNode.class);
+        statistics.put("Calendar#Status", calendarStatus.at("/status").asText());
+
+        ArrayNode calendarMeetings = (ArrayNode) doGet(Constant.URI.CALENDAR_MEETINGS, JsonNode.class);
+        if (calendarMeetings == null || calendarMeetings.isEmpty()) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("No calendar meetings found.");
+            }
+            return;
+        }
+        boolean inCall = calendarMeetings.get(0).at("/inCall").asBoolean();
+        localEndpointStatistics.setInCall(inCall);
+    }
+    /**
      * Retrieve device system information, including hardware info and lan status
      *
      * @param statistics map to put values to
@@ -1985,21 +2010,22 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             }
             return;
         }
-        response.forEach(jsonNode -> {
-            String microphoneOrderingNumber = getJsonProperty(jsonNode, "number", String.class);
-            statistics.put(String.format(Constant.Property.MICROPHONES_NAME_LABEL, microphoneOrderingNumber),
+        int micCounter = 1;
+        for (JsonNode jsonNode : response) {
+            statistics.put(String.format(Constant.Property.MICROPHONES_NAME_LABEL, micCounter),
                     getJsonProperty(jsonNode, "typeInString", String.class));
-            statistics.put(String.format(Constant.Property.MICROPHONES_STATUS_LABEL, microphoneOrderingNumber),
+            statistics.put(String.format(Constant.Property.MICROPHONES_STATUS_LABEL, micCounter),
                     getJsonProperty(jsonNode, "state", String.class));
-            statistics.put(String.format(Constant.Property.MICROPHONES_TYPE_LABEL, microphoneOrderingNumber),
+            statistics.put(String.format(Constant.Property.MICROPHONES_TYPE_LABEL, micCounter),
                     getJsonProperty(jsonNode, "type", String.class));
-            statistics.put(String.format(Constant.Property.MICROPHONES_HARDWARE_LABEL, microphoneOrderingNumber),
+            statistics.put(String.format(Constant.Property.MICROPHONES_HARDWARE_LABEL, micCounter),
                     getJsonProperty(jsonNode, "hwVersion", String.class));
-            statistics.put(String.format(Constant.Property.MICROPHONES_SOFTWARE_LABEL, microphoneOrderingNumber),
+            statistics.put(String.format(Constant.Property.MICROPHONES_SOFTWARE_LABEL, micCounter),
                     getJsonProperty(jsonNode, "swVersion", String.class));
-            statistics.put(String.format(Constant.Property.MICROPHONES_MUTE_LABEL, microphoneOrderingNumber),
+            statistics.put(String.format(Constant.Property.MICROPHONES_MUTE_LABEL, micCounter),
                     String.valueOf("0".equals(getJsonProperty(jsonNode, "mute", String.class))));
-        });
+            micCounter++;
+        }
     }
 
     /**
