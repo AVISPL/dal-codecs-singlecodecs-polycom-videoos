@@ -16,7 +16,7 @@ public interface Constant {
     interface Property {
         String SYSTEM_STATUS_GROUP_LABEL = "SystemStatus#";
         String SYSTEM_GROUP_LABEL = "System#";
-        String LAN_STATUS_GROUP_LABEL = "Lan Status#";
+        String LAN_STATUS_GROUP_LABEL = "LanStatus#";
         String APPLICATIONS_GROUP_LABEL = "Applications#";
         String ACTIVE_SESSIONS_GROUP_LABEL = "ActiveSessions#";
         String MICROPHONES_GROUP_LABEL = "Microphones#";
@@ -63,9 +63,9 @@ public interface Constant {
         String SYSTEM_DEVICE_MODEL_LABEL = "System#Device Model";
         String SYSTEM_HARDWARE_VERSION_LABEL = "System#Device Hardware Version";
         String SYSTEM_UPTIME_LABEL = "System#System Uptime";
-        String LAN_STATUS_DUPLEX_LABEL = "Lan Status#Duplex";
-        String LAN_STATUS_SPEED_LABEL = "Lan Status#Speed Mbps";
-        String LAN_STATUS_STATE_LABEL = "Lan Status#State";
+        String LAN_STATUS_DUPLEX_LABEL = "LanStatus#Duplex";
+        String LAN_STATUS_SPEED_LABEL = "LanStatus#Speed Mbps";
+        String LAN_STATUS_STATE_LABEL = "LanStatus#State";
 
         String DEVICE_MODE_LABEL = "System#DeviceMode";
         String SIGNAGE_MODE_LABEL = "System#SignageMode";
@@ -94,6 +94,8 @@ public interface Constant {
      * */
     interface URI {
         String SESSION = "rest/current/session";
+        String CALENDAR_STATUS = "rest/calendar";
+        String CALENDAR_MEETINGS = "rest/calendar/meetings?number=1";
         String STATUS = "rest/system/status";
         String CONFERENCING_CAPABILITIES = "rest/conferences/capabilities";
         String CONFERENCES = "rest/conferences"; // POST for calling a single participant, GET to list all
@@ -128,6 +130,7 @@ public interface Constant {
     interface PropertyGroup {
         String SYSTEM_STATUS = "SystemStatus";
         String SYSTEM = "System";
+        String CALENDAR = "Calendar";
         String COMMUNICATION_PROTOCOLS = "CommunicationProtocols";
         String APPLICATIONS = "Applications";
         String SESSIONS = "Sessions";
