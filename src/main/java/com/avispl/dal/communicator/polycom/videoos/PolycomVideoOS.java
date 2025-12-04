@@ -2023,7 +2023,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             statistics.put(String.format(Constant.Property.MICROPHONES_SOFTWARE_LABEL, micCounter),
                     getJsonProperty(jsonNode, "swVersion", String.class));
             statistics.put(String.format(Constant.Property.MICROPHONES_MUTE_LABEL, micCounter),
-                    String.valueOf("0".equals(getJsonProperty(jsonNode, "mute", String.class))));
+                    String.valueOf("1".equals(getJsonProperty(jsonNode, "mute", String.class))));
             micCounter++;
         }
     }
