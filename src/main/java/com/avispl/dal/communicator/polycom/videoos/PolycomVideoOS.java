@@ -155,17 +155,33 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         public ClientHttpResponse intercept(HttpRequest request, byte[] body, ClientHttpRequestExecution execution) throws IOException {
 
             ClientHttpResponse response = execution.execute(request, body);
-            if (response.getRawStatusCode() == 403 && !request.getURI().getPath().endsWith(Constant.URI.SESSION) && !authorizationLock.isLocked()) {
+            List<String> cookies = response.getHeaders().get("set-cookie");
+            if (cookies != null && cookies.size() > 0) {
+                for(String cookie: cookies) {
+                    if (cookie.startsWith("XSRF-TOKEN")) {
+                        xsrfToken = cookie.substring(cookie.indexOf("=")+1, cookie.indexOf(";"));
+                    }
+                }
+            }
+            if (response.getRawStatusCode() == 403 && !request.getURI().getPath().endsWith(Constant.URI.SESSION) && (!authorizationLock.isLocked() || failedLogin)) {
                 authorizationLock.lock();
                 try {
                     try {
                         authenticate();
-                        failedLogin = false;
+                    } catch(ResourceNotReachableException rnr) {
+                        logger.error("Unable to authorize: Resource is not reachable.", rnr);
+                        sessionId = null;
+                        xsrfToken = null;
+                        failedLogin = true;
                     } catch (Exception e) {
+                        sessionId = null;
+                        xsrfToken = null;
                         failedLogin = true;
                         logger.error("Exception during authentication process.", e);
                     }
-                    response = execution.execute(request, body);
+                    if (!failedLogin) {
+                        response = execution.execute(request, body);
+                    }
                 } catch (ResourceNotReachableException e) {
                     logger.warn("Exception during authorization command.", e);
                     // In case it's been rebooted by some other resource - we need to react to that.
@@ -230,7 +246,8 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     /**
      * Session Id used for authorization
      */
-    private volatile String sessionId;
+    volatile String sessionId;
+    volatile String xsrfToken;
     /**
      * Grace period for device reboot action. It takes about 3 minutes for the device to get fully
      * functional after reboot is triggered
@@ -262,7 +279,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private ExecutorService executorService;
     private final Map<String, Future<?>> polyAPICallFutureList = new HashMap<>();
 
-    private boolean failedLogin = false;
+    boolean failedLogin = false;
     private APIStateReportHandler apiStateReportHandler;
     /**
      * List of property groups to display
@@ -756,6 +773,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 endpointStatistics.setRegistrationStatus(localEndpointStatistics.getRegistrationStatus());
                 return Arrays.asList(extendedStatistics, endpointStatistics);
             }
+            if (failedLogin || StringUtils.isNullOrEmpty(sessionId) || StringUtils.isNullOrEmpty(xsrfToken)) {
+                authenticate();
+            }
             collectAdapterMetadata(statistics);
             if (localStatistics.getControllableProperties() == null) {
                 localStatistics.setControllableProperties(new ArrayList<>());
@@ -846,9 +866,6 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
         lastMonitoredDataCollectionTimestamp = System.currentTimeMillis();
 
-        if (failedLogin) {
-            throw new FailedLoginException("Authentication failed, please check device credentials.");
-        }
         apiStateReportHandler.verifyAPIState();
         return Arrays.asList(extendedStatistics, endpointStatistics);
     }
@@ -1781,6 +1798,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         doPost(Constant.URI.REBOOT, rebootRequest);
 
         sessionId = null;
+        xsrfToken = null;
         disconnect();
     }
 
@@ -2134,6 +2152,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
     @Override
     protected void authenticate() throws Exception {
+        disconnect();
         // authenticate and get sessionId like "PSN0HppfZap7wtV9MgTeGKLZL+q8q+65Te6g/r61KLqC26+thY"
         ObjectNode request = JsonNodeFactory.instance.objectNode();
         request.put("user", getLogin());
@@ -2143,15 +2162,17 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         Boolean success = getJsonProperty(json, "success", Boolean.class);
         if (success == null ? false : success) {
             sessionId = getJsonProperty(json.get("session"), "sessionId", String.class);
+            failedLogin = false;
         } else {
-            throw new FailedLoginException("Unable to login.");
+            throw new FailedLoginException("Unable to login. Please check the device credentials.");
         }
     }
 
     @Override
     protected HttpHeaders putExtraRequestHeaders(HttpMethod httpMethod, String uri, HttpHeaders headers) throws Exception {
-        if (sessionId != null && !uri.equals(Constant.URI.SESSION)) {
-            headers.add("Cookie", String.format("session_id=%s; Path=/; Domain=%s; Secure; HttpOnly;", sessionId, getHost()));
+        if (!uri.equals(Constant.URI.SESSION)) {
+            headers.set("Cookie", String.format("session_id=%s; XSRF-TOKEN=%s", sessionId, xsrfToken));
+            headers.set("x-xsrf-token", xsrfToken);
         }
         return super.putExtraRequestHeaders(httpMethod, uri, headers);
     }

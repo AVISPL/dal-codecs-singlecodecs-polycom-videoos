@@ -16,7 +16,7 @@ public interface Constant {
     interface Property {
         String SYSTEM_STATUS_GROUP_LABEL = "SystemStatus#";
         String SYSTEM_GROUP_LABEL = "System#";
-        String LAN_STATUS_GROUP_LABEL = "Lan Status#";
+        String LAN_STATUS_GROUP_LABEL = "LanStatus#";
         String APPLICATIONS_GROUP_LABEL = "Applications#";
         String ACTIVE_SESSIONS_GROUP_LABEL = "ActiveSessions#";
         String MICROPHONES_GROUP_LABEL = "Microphones#";
@@ -55,17 +55,17 @@ public interface Constant {
         String SYSTEM_H323_EXTENSION_LABEL = "System#H323Extension";
         String SYSTEM_H323_NAME_LABEL = "System#H323Name";
 
-        String SYSTEM_SERIAL_NUMBER_LABEL = "System#Serial Number";
-        String SYSTEM_SOFTWARE_VERSION_LABEL = "System#Software Version";
-        String SYSTEM_STATE_LABEL = "System#System State";
-        String SYSTEM_BUILD_LABEL = "System#System Build";
-        String SYSTEM_REBOOT_NEEDED_LABEL = "System#System Reboot Needed";
-        String SYSTEM_DEVICE_MODEL_LABEL = "System#Device Model";
-        String SYSTEM_HARDWARE_VERSION_LABEL = "System#Device Hardware Version";
-        String SYSTEM_UPTIME_LABEL = "System#System Uptime";
-        String LAN_STATUS_DUPLEX_LABEL = "Lan Status#Duplex";
-        String LAN_STATUS_SPEED_LABEL = "Lan Status#Speed Mbps";
-        String LAN_STATUS_STATE_LABEL = "Lan Status#State";
+        String SYSTEM_SERIAL_NUMBER_LABEL = "System#SerialNumber";
+        String SYSTEM_SOFTWARE_VERSION_LABEL = "System#SoftwareVersion";
+        String SYSTEM_STATE_LABEL = "System#SystemState";
+        String SYSTEM_BUILD_LABEL = "System#SystemBuild";
+        String SYSTEM_REBOOT_NEEDED_LABEL = "System#SystemRebootNeeded";
+        String SYSTEM_DEVICE_MODEL_LABEL = "System#DeviceModel";
+        String SYSTEM_HARDWARE_VERSION_LABEL = "System#DeviceHardwareVersion";
+        String SYSTEM_UPTIME_LABEL = "System#SystemUptime";
+        String LAN_STATUS_DUPLEX_LABEL = "LanStatus#Duplex";
+        String LAN_STATUS_SPEED_LABEL = "LanStatus#Speed(Mbps)";
+        String LAN_STATUS_STATE_LABEL = "LanStatus#State";
 
         String DEVICE_MODE_LABEL = "System#DeviceMode";
         String SIGNAGE_MODE_LABEL = "System#SignageMode";
