@@ -246,8 +246,8 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     /**
      * Session Id used for authorization
      */
-    volatile String sessionId;
-    volatile String xsrfToken;
+    private volatile String sessionId;
+    private volatile String xsrfToken;
     /**
      * Grace period for device reboot action. It takes about 3 minutes for the device to get fully
      * functional after reboot is triggered
