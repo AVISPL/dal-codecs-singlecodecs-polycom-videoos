@@ -66,7 +66,6 @@ public interface Constant {
         String LAN_STATUS_DUPLEX_LABEL = "LanStatus#Duplex";
         String LAN_STATUS_SPEED_LABEL = "LanStatus#Speed(Mbps)";
         String LAN_STATUS_STATE_LABEL = "LanStatus#State";
-
         String DEVICE_MODE_LABEL = "System#DeviceMode";
         String SIGNAGE_MODE_LABEL = "System#SignageMode";
 
@@ -94,6 +93,8 @@ public interface Constant {
      * */
     interface URI {
         String SESSION = "rest/current/session";
+        String CALENDAR_STATUS = "rest/calendar";
+        String CALENDAR_MEETINGS = "rest/calendar/meetings?number=1";
         String STATUS = "rest/system/status";
         String CONFERENCING_CAPABILITIES = "rest/conferences/capabilities";
         String CONFERENCES = "rest/conferences"; // POST for calling a single participant, GET to list all
@@ -128,6 +129,7 @@ public interface Constant {
     interface PropertyGroup {
         String SYSTEM_STATUS = "SystemStatus";
         String SYSTEM = "System";
+        String CALENDAR = "Calendar";
         String COMMUNICATION_PROTOCOLS = "CommunicationProtocols";
         String APPLICATIONS = "Applications";
         String SESSIONS = "Sessions";
