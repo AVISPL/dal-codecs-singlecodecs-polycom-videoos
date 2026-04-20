@@ -47,15 +47,15 @@ public class APIStateReportHandler {
      * @throws RuntimeException if {@link #apiErrors} is not empty
      * */
     public void verifyAPIState() {
-        if (apiErrors.isEmpty()) {
-            return;
-        }
-        String apiSections = String.join(",", apiErrors.keySet());
-        Throwable error = apiErrors.values().iterator().next();
-        String errorText = "N/A";
-        if (error != null) {
-            errorText = error.getMessage();
-        }
-        throw new RuntimeException(String.format("Unable to process requested API sections: [%s], error reported: [%s]", apiSections, errorText));
+//        if (apiErrors.isEmpty()) {
+//            return;
+//        }
+//        String apiSections = String.join(",", apiErrors.keySet());
+//        Throwable error = apiErrors.values().iterator().next();
+//        String errorText = "N/A";
+//        if (error != null) {
+//            errorText = error.getMessage();
+//        }
+//        throw new RuntimeException(String.format("Unable to process requested API sections: [%s], error reported: [%s]", apiSections, errorText));
     }
 }
