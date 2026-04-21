@@ -817,7 +817,10 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
         collectAdapterMetadata(statistics);
         extendedStatistics.setStatistics(statistics);
-        extendedStatistics.setControllableProperties(sanitizeControllableProperties(localStatistics.getControllableProperties()));
+        List<AdvancedControllableProperty> controllableProperties = localStatistics.getControllableProperties() == null
+                ? Collections.emptyList()
+                : localStatistics.getControllableProperties();
+        extendedStatistics.setControllableProperties(sanitizeControllableProperties(controllableProperties));
 
         endpointStatistics.setInCall(localEndpointStatistics.isInCall());
         endpointStatistics.setCallStats(localEndpointStatistics.getCallStats());
@@ -936,7 +939,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     }
 
     /**
-     * Process active device conference. Since there may be many conferences running at once, which Symphony doesnt support, we keep the 1st one
+     * Process active device conference. Since there may be many conferences running at once, which Symphony doesn't support, we keep the first one
      *
      * @param statistics map to save statistics data to
      * @param connectionData call connection data
@@ -968,7 +971,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     }
 
     /**
-     * Sanitize controllable properties by ordering them by the timestamp, and then removing all older duplicates, if any.
+     * Sanitize controllable properties by only keeping the version with the latest timestamp, if duplicates are found.
      *
      * @param properties original list of controls
      * @return {@link List<AdvancedControllableProperty>} sanitized list of controls
