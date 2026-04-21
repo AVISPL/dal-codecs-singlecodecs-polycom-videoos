@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.util.Assert;
 
+import java.util.Date;
 import java.util.List;
 
 import static org.junit.Assert.fail;
@@ -23,11 +24,12 @@ public class PolycomVideoOSTest {
     @BeforeEach
     public void setUp() throws Exception {
         polycomVideoOS = new PolycomVideoOS();
-        polycomVideoOS.setHost("***REMOVED***");
+        polycomVideoOS.setHost("");
         polycomVideoOS.setProtocol("https");
         polycomVideoOS.setPort(443);
-        polycomVideoOS.setPassword("1234");
-        polycomVideoOS.setLogin("admin");
+        polycomVideoOS.setPassword("");
+        polycomVideoOS.setLogin("");
+//        polycomVideoOS.setDisplayPropertyGroupsPreset("AppMode");
         polycomVideoOS.init();
     }
 
@@ -35,10 +37,12 @@ public class PolycomVideoOSTest {
     public void testGetStatistics() throws Exception{
         long startTime = System.currentTimeMillis();
         List<Statistics> statisticsList = polycomVideoOS.getMultipleStatistics();
-        System.out.println("Statistics retrieved in " + ((System.currentTimeMillis() - startTime) / 1000) + "s");
-        Thread.sleep(30000);
-        startTime = System.currentTimeMillis();
-        statisticsList = polycomVideoOS.getMultipleStatistics();
+        for(int i = 0; i < 10; i++) {
+            System.out.println("Statistics retrieved in " + ((System.currentTimeMillis() - startTime) / 1000) + "s at" + new Date());
+            startTime = System.currentTimeMillis();
+            statisticsList = polycomVideoOS.getMultipleStatistics();
+            Thread.sleep(30000);
+        }
         System.out.println("Statistics retrieved in " + ((System.currentTimeMillis() - startTime) / 1000) + "s");
         Thread.sleep(30000);
         startTime = System.currentTimeMillis();
