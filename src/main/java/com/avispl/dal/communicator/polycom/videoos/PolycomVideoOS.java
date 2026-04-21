@@ -747,6 +747,11 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      */
     @Override
     public List<Statistics> getMultipleStatistics() throws Exception {
+        try {
+            apiPollingInterval = getMonitoringRate() * 60000;
+        } catch (NoSuchMethodError nsme) {
+            logger.warn("Unsupported feature: getMonitoringRate isn't available on current Cloud Connector version.", nsme);
+        }
         ExtendedStatistics extendedStatistics = new ExtendedStatistics();
         EndpointStatistics endpointStatistics = new EndpointStatistics();
 
@@ -756,104 +761,27 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         final Map<String, String> statistics = localStatistics.getStatistics();
         controlOperationsLock.lock();
         try {
-            boolean validMonitoredDataCollectionInterval = (System.currentTimeMillis() - lastMonitoredDataCollectionTimestamp) >= apiPollingInterval;
-
-            if (isValidControlCoolDown() || !validMonitoredDataCollectionInterval) {
-                if (logger.isDebugEnabled()) {
-                    logger.debug("Device is occupied. Skipping statistics refresh call.");
-                }
-                collectAdapterMetadata(statistics);
-                extendedStatistics.setStatistics(statistics);
-                extendedStatistics.setControllableProperties(localStatistics.getControllableProperties());
-
-                endpointStatistics.setInCall(localEndpointStatistics.isInCall());
-                endpointStatistics.setCallStats(localEndpointStatistics.getCallStats());
-                endpointStatistics.setVideoChannelStats(localEndpointStatistics.getVideoChannelStats());
-                endpointStatistics.setAudioChannelStats(localEndpointStatistics.getAudioChannelStats());
-                endpointStatistics.setRegistrationStatus(localEndpointStatistics.getRegistrationStatus());
-                return Arrays.asList(extendedStatistics, endpointStatistics);
+            if (shouldSkipRefresh()) {
+                return buildCachedResponse(statistics, extendedStatistics, endpointStatistics);
             }
-            if (failedLogin || StringUtils.isNullOrEmpty(sessionId) || StringUtils.isNullOrEmpty(xsrfToken)) {
-                authenticate();
-            }
+            checkAuthentication();
             collectAdapterMetadata(statistics);
+
             if (localStatistics.getControllableProperties() == null) {
                 localStatistics.setControllableProperties(new ArrayList<>());
             }
+
             List<AdvancedControllableProperty> controls = localStatistics.getControllableProperties();
 
-            processAsyncAPIRequest(Constant.PropertyGroup.SYSTEM_STATUS, () -> retrieveSystemStatus(statistics));
-            processAsyncAPIRequest(Constant.PropertyGroup.SYSTEM, () -> retrieveSystemInfo(statistics));
-            processAsyncAPIRequest(Constant.PropertyGroup.CALENDAR, () -> retrieveCalendarInfo(statistics));
-            processAsyncAPIRequest(Constant.PropertyGroup.COMMUNICATION_PROTOCOLS, () -> retrieveCommunicationProtocolsInfo(statistics));
-            processAsyncAPIRequest(Constant.PropertyGroup.APPLICATIONS, () -> retrieveApplications(statistics, controls));
-            processAsyncAPIRequest(Constant.PropertyGroup.SESSIONS, () -> retrieveSessions(statistics));
-            processAsyncAPIRequest(Constant.PropertyGroup.MICROPHONES, () -> retrieveMicrophonesStatistics(statistics));
-            processAsyncAPIRequest(Constant.PropertyGroup.CONTENT_STATUS, () -> retrieveContentStatus(statistics));
-            processAsyncAPIRequest(Constant.PropertyGroup.CONFERENCING_CAPABILITIES, () -> retrieveConferencingCapabilities(statistics));
-            processAsyncAPIRequest(Constant.PropertyGroup.AUDIO_STATUS, () -> retrieveAudioStatus(statistics));
-            processAsyncAPIRequest(Constant.PropertyGroup.COLLABORATION_STATUS, () -> retrieveCollaborationStatus(statistics));
-            processAsyncAPIRequest(Constant.PropertyGroup.SOFTWARE_MODE, () -> retrieveSoftwareModeStatus(statistics, controls));
-            processAsyncAPIRequest(Constant.PropertyGroup.PERIPHERALS, () -> retrievePeripheralsInformation(statistics));
-            processAsyncAPIRequest(Constant.PropertyGroup.VOLUME, () -> {
-                Integer volumeLevel = retrieveVolumeLevel();
-                statistics.remove(Constant.Property.CONTROL_AUDIO_VOLUME);
-                if (volumeLevel != null) {
-                    statistics.put(Constant.Property.CONTROL_AUDIO_VOLUME, String.valueOf(volumeLevel));
-                    addControllableProperty(controls, createSlider(Constant.Property.CONTROL_AUDIO_VOLUME, 0.0f, 100.0f, Float.valueOf(volumeLevel)));
-                }
-            });
-            processAsyncAPIRequest(Constant.PropertyGroup.VIDEO_MUTE, () -> {
-                Boolean videoMuteStatus = retrieveVideoMuteStatus();
-                statistics.remove(Constant.Property.CONTROL_MUTE_VIDEO);
-                if (videoMuteStatus != null) {
-                    int value = retrieveVideoMuteStatus() ? 1 : 0;
-                    statistics.put(Constant.Property.CONTROL_MUTE_VIDEO, String.valueOf(value));
-                    addControllableProperty(controls, createSwitch(Constant.Property.CONTROL_MUTE_VIDEO, value));
-                }
-            });
-            processAsyncAPIRequest(Constant.PropertyGroup.AUDIO_MUTE, () -> {
-                int value = Objects.equals(retrieveMuteStatus(), MuteStatus.Muted) ? 1 : 0;
-                statistics.put(Constant.Property.CONTROL_MUTE_MICROPHONES, String.valueOf(value));
-                addControllableProperty(controls, createSwitch(Constant.Property.CONTROL_MUTE_MICROPHONES, value));
-            });
-
-            processAsyncAPIRequest(Constant.PropertyGroup.CONFERENCES, () -> {
-                CallConnectionData connectionData = retrieveActiveConferenceCallStatistics(statistics);
-                Integer conferenceId = connectionData.getConferenceId();
-                boolean validConferenceId = conferenceId != null && conferenceId > -1;
-
-                localEndpointStatistics.setInCall(validConferenceId);
-                localEndpointStatistics.setRegistrationStatus(retrieveRegistrationStatus());
-                if (validConferenceId) {
-                    CallStats callStats = new CallStats();
-                    callStats.setProtocol(statistics.get("ActiveConference#Connection1Type"));
-                    callStats.setRequestedCallRate(defaultCallRate);
-
-                    AudioChannelStats audioChannelStats = new AudioChannelStats();
-                    VideoChannelStats videoChannelStats = new VideoChannelStats();
-                    ContentChannelStats contentChannelStats = new ContentChannelStats();
-
-                    ArrayNode conferenceCallMediaStats = retrieveConferenceCallMediaStats(conferenceId);
-                    processConferenceCallMediaStats(conferenceCallMediaStats, audioChannelStats, videoChannelStats, callStats);
-                    retrieveSharedMediaStats(contentChannelStats);
-
-                    String dialString = retrieveDeviceDialString();
-
-                    callStats.setCallId(buildCallId(conferenceId, connectionData.getCallId(), connectionData.getStartDate(), dialString));
-                    callStats.setRemoteAddress(dialString);
-
-                    localEndpointStatistics.setCallStats(callStats);
-                    localEndpointStatistics.setAudioChannelStats(audioChannelStats);
-                    localEndpointStatistics.setVideoChannelStats(videoChannelStats);
-                    localEndpointStatistics.setContentChannelStats(contentChannelStats);
-                }
-            });
+            collectDeviceData(statistics, controls);
+            collectConferenceData(statistics);
 
             statistics.put(Constant.Property.CONTROL_REBOOT, Constant.Values.N_A);
             addControllableProperty(controls, createButton(Constant.Property.CONTROL_REBOOT, Constant.Property.CONTROL_REBOOT, "Rebooting...", REBOOT_GRACE_PERIOD_MS));
+
             statistics.put(Constant.Property.ADAPTER_MONITORING_CYCLE_TIMESTAMP, dateFormat.format(new Date()));
 
+            controls = sanitizeControllableProperties(controls);
             extendedStatistics.setStatistics(new HashMap<>(statistics));
             extendedStatistics.setControllableProperties(new ArrayList<>(controls));
         } finally {
@@ -866,9 +794,198 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         endpointStatistics.setRegistrationStatus(localEndpointStatistics.getRegistrationStatus());
 
         lastMonitoredDataCollectionTimestamp = System.currentTimeMillis();
-
         apiStateReportHandler.verifyAPIState();
         return Arrays.asList(extendedStatistics, endpointStatistics);
+    }
+
+    /**
+     * Define whether it is a normal monitoring cycle, or an emergency delivery.
+     *
+     * @return boolean - true if this is an emergency delivery cycle, false otherwise
+     * */
+    private boolean shouldSkipRefresh() {
+        boolean validInterval = (System.currentTimeMillis() - lastMonitoredDataCollectionTimestamp) >= apiPollingInterval;
+        return isValidControlCoolDown() || !validInterval;
+    }
+
+    /***/
+    private List<Statistics> buildCachedResponse(Map<String, String> statistics,
+                                                 ExtendedStatistics extendedStatistics,
+                                                 EndpointStatistics endpointStatistics) {
+        if (logger.isDebugEnabled()) {
+            logger.debug("Device is occupied. Skipping statistics refresh call.");
+        }
+        collectAdapterMetadata(statistics);
+        extendedStatistics.setStatistics(statistics);
+        extendedStatistics.setControllableProperties(sanitizeControllableProperties(localStatistics.getControllableProperties()));
+
+        endpointStatistics.setInCall(localEndpointStatistics.isInCall());
+        endpointStatistics.setCallStats(localEndpointStatistics.getCallStats());
+        endpointStatistics.setVideoChannelStats(localEndpointStatistics.getVideoChannelStats());
+        endpointStatistics.setAudioChannelStats(localEndpointStatistics.getAudioChannelStats());
+        endpointStatistics.setRegistrationStatus(localEndpointStatistics.getRegistrationStatus());
+        return Arrays.asList(extendedStatistics, endpointStatistics);
+    }
+
+    /**
+     * Check login state, sessionId and xsrf token presence.
+     * If the login info is invalid, authenticate() will be called.
+     *
+     * @throws Exception if any error occurs
+     * */
+    private void checkAuthentication() throws Exception {
+        if (failedLogin || StringUtils.isNullOrEmpty(sessionId) || StringUtils.isNullOrEmpty(xsrfToken)) {
+            authenticate();
+        }
+    }
+
+    /**
+     * Address async requests to collect device statistics
+     * @param statistics map to collect statistics to
+     * @param controls list of controls to collect controls to
+     *
+     * @throws Exception if any error occurs
+     * */
+    private void collectDeviceData(Map<String, String> statistics, List<AdvancedControllableProperty> controls) throws Exception {
+        // Monitored data
+        processAsyncAPIRequest(Constant.PropertyGroup.SYSTEM_STATUS, () -> retrieveSystemStatus(statistics));
+        processAsyncAPIRequest(Constant.PropertyGroup.SYSTEM, () -> retrieveSystemInfo(statistics));
+        processAsyncAPIRequest(Constant.PropertyGroup.CALENDAR, () -> retrieveCalendarInfo(statistics));
+        processAsyncAPIRequest(Constant.PropertyGroup.COMMUNICATION_PROTOCOLS, () -> retrieveCommunicationProtocolsInfo(statistics));
+        processAsyncAPIRequest(Constant.PropertyGroup.SESSIONS, () -> retrieveSessions(statistics));
+        processAsyncAPIRequest(Constant.PropertyGroup.MICROPHONES, () -> retrieveMicrophonesStatistics(statistics));
+        processAsyncAPIRequest(Constant.PropertyGroup.CONTENT_STATUS, () -> retrieveContentStatus(statistics));
+        processAsyncAPIRequest(Constant.PropertyGroup.CONFERENCING_CAPABILITIES, () -> retrieveConferencingCapabilities(statistics));
+        processAsyncAPIRequest(Constant.PropertyGroup.AUDIO_STATUS, () -> retrieveAudioStatus(statistics));
+        processAsyncAPIRequest(Constant.PropertyGroup.COLLABORATION_STATUS, () -> retrieveCollaborationStatus(statistics));
+        processAsyncAPIRequest(Constant.PropertyGroup.PERIPHERALS, () -> retrievePeripheralsInformation(statistics));
+
+        // Controllable properties
+        processAsyncAPIRequest(Constant.PropertyGroup.APPLICATIONS, () -> retrieveApplications(statistics, controls));
+        processAsyncAPIRequest(Constant.PropertyGroup.SOFTWARE_MODE, () -> retrieveSoftwareModeStatus(statistics, controls));
+        processAsyncAPIRequest(Constant.PropertyGroup.VOLUME, () -> collectVolumeControl(statistics, controls));
+        processAsyncAPIRequest(Constant.PropertyGroup.VIDEO_MUTE, () -> collectVideoMuteControl(statistics, controls));
+        processAsyncAPIRequest(Constant.PropertyGroup.AUDIO_MUTE, () -> collectAudioMuteControl(statistics, controls));
+    }
+
+    /**
+     * Retrieve volume control stat and its controllable property
+     * @param statistics map to collect statistics to
+     * @param controls list of controls to collect controls to
+     *
+     * @throws Exception if any error occurs
+     * */
+    private void collectVolumeControl(Map<String, String> statistics, List<AdvancedControllableProperty> controls) throws Exception {
+        Integer volumeLevel = retrieveVolumeLevel();
+        statistics.remove(Constant.Property.CONTROL_AUDIO_VOLUME);
+        if (volumeLevel != null) {
+            statistics.put(Constant.Property.CONTROL_AUDIO_VOLUME, String.valueOf(volumeLevel));
+            addControllableProperty(controls, createSlider(Constant.Property.CONTROL_AUDIO_VOLUME, 0.0f, 100.0f, Float.valueOf(volumeLevel)));
+        }
+    }
+
+    /**
+     * Retrieve video mute control stat and its controllable property
+     * @param statistics map to collect statistics to
+     * @param controls list of controls to collect controls to
+     *
+     * @throws Exception if any error occurs
+     * */
+    private void collectVideoMuteControl(Map<String, String> statistics, List<AdvancedControllableProperty> controls) throws Exception {
+        Boolean videoMuteStatus = retrieveVideoMuteStatus();
+        statistics.remove(Constant.Property.CONTROL_MUTE_VIDEO);
+        if (videoMuteStatus != null) {
+            int value = videoMuteStatus ? 1 : 0;
+            statistics.put(Constant.Property.CONTROL_MUTE_VIDEO, String.valueOf(value));
+            addControllableProperty(controls, createSwitch(Constant.Property.CONTROL_MUTE_VIDEO, value));
+        }
+    }
+
+    /**
+     * Retrieve audio mute control stat and its controllable property
+     * @param statistics map to collect statistics to
+     * @param controls list of controls to collect controls to
+     *
+     * @throws Exception if any error occurs
+     * */
+    private void collectAudioMuteControl(Map<String, String> statistics, List<AdvancedControllableProperty> controls) throws Exception {
+        int value = Objects.equals(retrieveMuteStatus(), MuteStatus.Muted) ? 1 : 0;
+        statistics.put(Constant.Property.CONTROL_MUTE_MICROPHONES, String.valueOf(value));
+        addControllableProperty(controls, createSwitch(Constant.Property.CONTROL_MUTE_MICROPHONES, value));
+    }
+
+    /***
+     * Collect conference data for a device
+     * @param statistics map to save statistics to
+     *
+     * @throws Exception if an error occurs
+     */
+    private void collectConferenceData(Map<String, String> statistics) throws Exception {
+        processAsyncAPIRequest(Constant.PropertyGroup.CONFERENCES, () -> {
+            CallConnectionData connectionData = retrieveActiveConferenceCallStatistics(statistics);
+            Integer conferenceId = connectionData.getConferenceId();
+            boolean validConferenceId = conferenceId != null && conferenceId > -1;
+
+            localEndpointStatistics.setInCall(validConferenceId);
+            localEndpointStatistics.setRegistrationStatus(retrieveRegistrationStatus());
+
+            if (validConferenceId) {
+                processActiveConference(statistics, connectionData, conferenceId);
+            }
+        });
+    }
+
+    /**
+     * Process active device conference. Since there may be many conferences running at once, which Symphony doesnt support, we keep the 1st one
+     *
+     * @param statistics map to save statistics data to
+     * @param connectionData call connection data
+     * @param conferenceId id of a conference
+     *
+     * @throws Exception if an error occurs
+     * */
+    private void processActiveConference(Map<String, String> statistics, CallConnectionData connectionData, Integer conferenceId) throws Exception {
+        CallStats callStats = new CallStats();
+        callStats.setProtocol(statistics.get("ActiveConference#Connection1Type"));
+        callStats.setRequestedCallRate(defaultCallRate);
+
+        AudioChannelStats audioChannelStats = new AudioChannelStats();
+        VideoChannelStats videoChannelStats = new VideoChannelStats();
+        ContentChannelStats contentChannelStats = new ContentChannelStats();
+
+        ArrayNode conferenceCallMediaStats = retrieveConferenceCallMediaStats(conferenceId);
+        processConferenceCallMediaStats(conferenceCallMediaStats, audioChannelStats, videoChannelStats, callStats);
+        retrieveSharedMediaStats(contentChannelStats);
+
+        String dialString = retrieveDeviceDialString();
+        callStats.setCallId(buildCallId(conferenceId, connectionData.getCallId(), connectionData.getStartDate(), dialString));
+        callStats.setRemoteAddress(dialString);
+
+        localEndpointStatistics.setCallStats(callStats);
+        localEndpointStatistics.setAudioChannelStats(audioChannelStats);
+        localEndpointStatistics.setVideoChannelStats(videoChannelStats);
+        localEndpointStatistics.setContentChannelStats(contentChannelStats);
+    }
+
+    /**
+     * Sanitize controllable properties by ordering them by the timestamp, and then removing all older duplicates, if any.
+     *
+     * @param properties original list of controls
+     * @return {@link List<AdvancedControllableProperty>} sanitized list of controls
+     * */
+    private List<AdvancedControllableProperty> sanitizeControllableProperties(List<AdvancedControllableProperty> properties) {
+        Map<String, AdvancedControllableProperty> latest = new LinkedHashMap<>();
+        for (AdvancedControllableProperty p : properties) {
+            latest.merge(p.getName(), p, (existing, incoming) -> {
+                        Date incomingTimestamp = incoming.getTimestamp();
+                        Date existingTimestamp = existing.getTimestamp();
+                        if (incomingTimestamp == null) return existing;
+                        if (existingTimestamp == null) return incoming;
+                        return incomingTimestamp.after(existingTimestamp) ? incoming : existing;
+                    }
+            );
+        }
+        return new ArrayList<>(latest.values());
     }
 
     /**
