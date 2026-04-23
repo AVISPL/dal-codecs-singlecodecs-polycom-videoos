@@ -1473,13 +1473,13 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         Boolean deviceMode = retrieveDeviceMode();
         if (deviceMode != null) {
             statistics.put(Constant.Property.DEVICE_MODE_LABEL, String.valueOf(deviceMode));
-            controllableProperties.add(createSwitch(Constant.Property.DEVICE_MODE_LABEL, deviceMode ? 1 : 0));
+            addControllableProperty(controllableProperties, createSwitch(Constant.Property.DEVICE_MODE_LABEL, deviceMode ? 1 : 0));
         }
 
         Boolean signageMode = retrieveSignageMode();
         if (signageMode != null) {
             statistics.put(Constant.Property.SIGNAGE_MODE_LABEL, String.valueOf(signageMode));
-            controllableProperties.add(createSwitch(Constant.Property.SIGNAGE_MODE_LABEL, signageMode ? 1 : 0));
+            addControllableProperty(controllableProperties, createSwitch(Constant.Property.SIGNAGE_MODE_LABEL, signageMode ? 1 : 0));
         }
     }
 
