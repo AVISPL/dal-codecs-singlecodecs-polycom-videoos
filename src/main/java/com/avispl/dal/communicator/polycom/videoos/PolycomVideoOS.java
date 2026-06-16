@@ -209,7 +209,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
     @Override
     protected RestTemplate obtainRestTemplate() throws Exception {
-        var template = super.obtainRestTemplate();
+        RestTemplate template = super.obtainRestTemplate();
         if (!template.getInterceptors().contains(interceptor)) {
             template.getInterceptors().add(interceptor);
         }
@@ -295,8 +295,8 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
 
         try {
-            var fresh         = new ConcurrentHashMap<String, String>();
-            var freshControls = Collections.synchronizedList(new ArrayList<AdvancedControllableProperty>());
+            ConcurrentHashMap<String, String> fresh = new ConcurrentHashMap<>();
+            List<AdvancedControllableProperty> freshControls = Collections.synchronizedList(new ArrayList<AdvancedControllableProperty>());
             runAllGroups(fresh, freshControls);
 
             stateLock.lock();
@@ -327,7 +327,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private void runAllGroups(Map<String, String> props, List<AdvancedControllableProperty> controls) {
         // fetchSystem (GET /system + POST /config) and fetchSystemModes (GET /mode/device + GET /mode/signage)
         // are separated so the mode reads run in parallel with the heavier system/config calls.
-        var groups = new LinkedHashMap<String, GroupFetcher>();
+        LinkedHashMap<String, GroupFetcher> groups = new LinkedHashMap<>();
         if (isGroupEnabled("SystemStatus"))             groups.put(PropertyGroup.SYSTEM_STATUS.name(),             (p, c) -> fetchSystemStatus(p));
         if (isGroupEnabled("System")) {
                                                         groups.put(PropertyGroup.SYSTEM.name(),                    (p, c) -> fetchSystem(p));
@@ -343,7 +343,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         if (isGroupEnabled("Applications"))             groups.put(PropertyGroup.APPLICATIONS.name(),              (p, c) -> fetchApplications(p, c));
         if (isGroupEnabled("Peripherals"))              groups.put(PropertyGroup.PERIPHERALS.name(),               (p, c) -> fetchPeripherals(p));
 
-        var futures = groups.entrySet().stream()
+        List<CompletableFuture<Void>> futures = groups.entrySet().stream()
             .map(e -> CompletableFuture.runAsync(() -> {
                 try {
                     e.getValue().fetch(props, controls);
@@ -353,7 +353,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                     logger.warn("Group " + e.getKey() + " fetch failed: " + ex.getMessage());
                 }
             }, executor))
-            .toList();
+            .collect(Collectors.toList());
 
         try {
             CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
@@ -371,7 +371,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private List<Statistics> snapshot() {
         stateLock.lock();
         try {
-            var stats = new ExtendedStatistics();
+            ExtendedStatistics stats = new ExtendedStatistics();
             stats.setStatistics(new HashMap<>(cachedProperties));
             stats.setControllableProperties(new ArrayList<>(deduplicateControls(cachedControls)));
             return Collections.singletonList(stats);
@@ -392,58 +392,59 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         stateLock.lock();
         try {
             switch (property) {
-                case ControlKey.MUTE_MICROPHONES -> {
+                case ControlKey.MUTE_MICROPHONES:
                     doPost(ApiUri.AUDIO_MUTED, !"0".equals(value));
                     updateCachedControl(property, value);
-                }
-                case ControlKey.MUTE_VIDEO -> {
-                    ObjectNode req = JsonNodeFactory.instance.objectNode();
-                    req.put("mute", "1".equals(value));
-                    doPost(ApiUri.VIDEO_MUTE, req, JsonNode.class);
+                    break;
+                case ControlKey.MUTE_VIDEO:
+                    ObjectNode muteVideoReq = JsonNodeFactory.instance.objectNode();
+                    muteVideoReq.put("mute", "1".equals(value));
+                    doPost(ApiUri.VIDEO_MUTE, muteVideoReq, JsonNode.class);
                     updateCachedControl(property, value);
-                }
-                case ControlKey.VOLUME -> {
+                    break;
+                case ControlKey.VOLUME:
                     doPost(ApiUri.AUDIO_VOLUME, Math.round(Float.parseFloat(value)));
                     updateCachedControl(property, value);
                     cachedProperties.put(property, value);
-                }
-                case ControlKey.DEVICE_MODE -> {
+                    break;
+                case ControlKey.DEVICE_MODE:
                     if ("1".equals(value)) doPost(ApiUri.DEVICE_MODE, null);
                     else                   doDelete(ApiUri.DEVICE_MODE);
                     updateCachedControl(property, value);
                     cachedProperties.put(property, value);
-                }
-                case ControlKey.SIGNAGE_MODE -> {
+                    break;
+                case ControlKey.SIGNAGE_MODE:
                     if ("1".equals(value)) doPost(ApiUri.SIGNAGE_MODE, null);
                     else                   doDelete(ApiUri.SIGNAGE_MODE);
                     updateCachedControl(property, value);
                     cachedProperties.put(property, value);
-                }
-                case ControlKey.REBOOT -> {
-                    ObjectNode req = JsonNodeFactory.instance.objectNode();
-                    req.put("action", "reboot");
-                    doPost(ApiUri.REBOOT, req);
+                    break;
+                case ControlKey.REBOOT:
+                    ObjectNode rebootReq = JsonNodeFactory.instance.objectNode();
+                    rebootReq.put("action", "reboot");
+                    doPost(ApiUri.REBOOT, rebootReq);
                     invalidateSession();
                     disconnect();
-                }
-                case ControlKey.APP_PROVIDER -> {
+                    break;
+                case ControlKey.APP_PROVIDER:
                     selectedApp = value;
                     cachedProperties.put(ControlKey.APP_SAVE, Values.N_A);
                     addOrReplace(cachedControls, createButton(ControlKey.APP_SAVE, "Save", "Saving...", 120_000L));
                     updateCachedControl(property, value);
-                }
-                case ControlKey.APP_SAVE -> {
+                    break;
+                case ControlKey.APP_SAVE:
                     if (selectedApp != null) {
-                        doPost(ApiUri.SYSTEM_MODE, Map.of("enabledapps", List.of(selectedApp)), JsonNode.class);
+                        Map<String, List<String>> appSaveBody = new HashMap<>();
+                        appSaveBody.put("enabledapps", Collections.singletonList(selectedApp));
+                        doPost(ApiUri.SYSTEM_MODE, appSaveBody, JsonNode.class);
                         selectedApp = null;
                     }
                     cachedProperties.remove(ControlKey.APP_SAVE);
                     cachedControls.removeIf(c -> ControlKey.APP_SAVE.equals(c.getName()));
-                }
-                default -> {
+                    break;
+                default:
                     logger.warn("Unrecognized control property: " + property);
                     return;
-                }
             }
             lastControlTimestamp = System.currentTimeMillis();
         } finally {
@@ -454,7 +455,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     @Override
     public void controlProperties(List<ControllableProperty> list) throws Exception {
         if (list == null || list.isEmpty()) return;
-        for (var cp : list) controlProperty(cp);
+        for (ControllableProperty cp : list) controlProperty(cp);
     }
 
     // -------------------------------------------------------------------------
@@ -513,16 +514,14 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
 
         // SIP/H.323 identities require a POST to the config endpoint with key names
-        JsonNode config = doPost(ApiUri.CONFIG, Map.of("names", List.of(
-            ApiUri.CONFIG_KEY_SIP_USERNAME,
-            ApiUri.CONFIG_KEY_H323_NAME,
-            ApiUri.CONFIG_KEY_H323_EXTENSION
-        )), JsonNode.class);
+        Map<String, List<String>> configBody = new HashMap<>();
+        configBody.put("names", Arrays.asList(ApiUri.CONFIG_KEY_SIP_USERNAME, ApiUri.CONFIG_KEY_H323_NAME, ApiUri.CONFIG_KEY_H323_EXTENSION));
+        JsonNode config = doPost(ApiUri.CONFIG, configBody, JsonNode.class);
 
         if (config != null) {
             JsonNode vars = config.get("vars");
             if (vars != null) {
-                var vals = new HashMap<String, String>();
+                HashMap<String, String> vals = new HashMap<>();
                 vars.forEach(v -> {
                     if (v.has("name") && v.has("value")) {
                         vals.put(v.get("name").asText(), v.get("value").asText());
@@ -710,7 +709,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         // Snapshot once to avoid a race with controlProperty (which writes selectedApp under stateLock)
         String currentSelectedApp = selectedApp;
 
-        var dropdownOptions = new ArrayList<String>();
+        List<String> dropdownOptions = new ArrayList<>();
         String latestApp    = null;
         long   latestTs     = 0;
 
@@ -826,8 +825,8 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     }
 
     private List<AdvancedControllableProperty> deduplicateControls(List<AdvancedControllableProperty> controls) {
-        var latest = new LinkedHashMap<String, AdvancedControllableProperty>();
-        for (var c : controls) {
+        LinkedHashMap<String, AdvancedControllableProperty> latest = new LinkedHashMap<>();
+        for (AdvancedControllableProperty c : controls) {
             latest.merge(c.getName(), c, (existing, incoming) -> {
                 if (incoming.getTimestamp() == null) return existing;
                 if (existing.getTimestamp() == null) return incoming;
@@ -872,7 +871,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
     private String toPascalCase(String input) {
         if (input == null || input.isEmpty()) return input;
-        var sb = new StringBuilder();
+        StringBuilder sb = new StringBuilder();
         for (String word : input.toLowerCase().split("\\s+")) {
             if (word.isEmpty()) continue;
             if (word.equals("sip") || word.equals("h323") || word.equals("p2p")) {
@@ -894,7 +893,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
     private String formatUptimeSeconds(long s) {
         long d = s / 86400, h = s % 86400 / 3600, m = s % 3600 / 60, sec = s % 60;
-        var sb = new StringBuilder();
+        StringBuilder sb = new StringBuilder();
         if (d   > 0) sb.append(d).append(" day(s) ");
         if (h   > 0) sb.append(h).append(" hour(s) ");
         if (m   > 0) sb.append(m).append(" minute(s) ");
