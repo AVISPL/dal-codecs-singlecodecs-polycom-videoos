@@ -43,6 +43,12 @@ public final class ApiUri {
     // POST with null body — undocumented peripheral device enumeration endpoint
     public static final String PERIPHERAL_DEVICES   = "rest/current/devicemanagement/devices";
 
+    public static final String CONFERENCES           = "rest/conferences";
+    public static final String CONFERENCE_MEDIASTATS = "rest/conferences/%s/mediastats";
+    public static final String SHARED_MEDIASTATS     = "rest/mediastats";
+    public static final String SIP_SERVERS           = "rest/system/sipservers";
+    public static final String H323_SERVERS          = "rest/system/h323gatekeepers";
+
     // Keys used in POST /rest/config to retrieve SIP/H.323 identities
     public static final String CONFIG_KEY_SIP_USERNAME   = "comm.nics.sipnic.sipusername";
     public static final String CONFIG_KEY_H323_NAME      = "comm.nics.h323nic.h323name";

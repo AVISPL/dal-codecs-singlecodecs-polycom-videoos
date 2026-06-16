@@ -25,6 +25,7 @@ public enum PropertyGroup {
     COLLABORATION             ("Collaboration"),
     CONFERENCING_CAPABILITIES ("ConferencingCapabilities"),
     ACTIVE_SESSIONS           ("ActiveSessions"),
+    ACTIVE_CONFERENCE         ("ActiveConference"),
     APPLICATIONS              ("Applications"),
     PERIPHERALS               ("Peripherals");
 

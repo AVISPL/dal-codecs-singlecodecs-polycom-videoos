@@ -180,6 +180,42 @@
       }
     },
     {
+      "request": { "method": "GET", "url": "/rest/conferences" },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "body": "[{\"id\":1,\"startTime\":1749999600000,\"terminals\":[{\"address\":\"sip:remote@example.com\",\"systemID\":\"RemoteSystem\"}],\"connections\":[{\"id\":101,\"callType\":\"SIP\",\"callInfo\":\"sip:remote@example.com\",\"startTime\":1749999600000}]}]"
+      }
+    },
+    {
+      "request": { "method": "GET", "urlPattern": "/rest/conferences/[0-9]+/mediastats" },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "body": "[{\"mediaDirection\":\"RX\",\"mediaType\":\"AUDIO\",\"actualBitRate\":64,\"jitter\":2.5,\"packetLoss\":0,\"percentPacketLoss\":0.0,\"mediaAlgorithm\":\"OPUS\"},{\"mediaDirection\":\"TX\",\"mediaType\":\"AUDIO\",\"actualBitRate\":64,\"jitter\":1.2,\"packetLoss\":0,\"percentPacketLoss\":0.0,\"mediaAlgorithm\":\"OPUS\"},{\"mediaDirection\":\"RX\",\"mediaType\":\"VIDEO\",\"actualBitRate\":1024,\"jitter\":3.1,\"packetLoss\":1,\"percentPacketLoss\":0.1,\"actualFrameRate\":30.0,\"mediaAlgorithm\":\"H264\",\"mediaFormat\":\"1920x1080\"},{\"mediaDirection\":\"TX\",\"mediaType\":\"VIDEO\",\"actualBitRate\":1024,\"jitter\":2.0,\"packetLoss\":0,\"percentPacketLoss\":0.0,\"actualFrameRate\":30.0,\"mediaAlgorithm\":\"H264\",\"mediaFormat\":\"1920x1080\"}]"
+      }
+    },
+    {
+      "request": { "method": "GET", "url": "/rest/mediastats" },
+      "response": { "status": 200, "headers": { "Content-Type": "application/json" }, "body": "{\"vars\":[]}" }
+    },
+    {
+      "request": { "method": "GET", "url": "/rest/system/sipservers" },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "body": "[{\"state\":\"up\",\"address\":\"sip.example.com\"}]"
+      }
+    },
+    {
+      "request": { "method": "GET", "url": "/rest/system/h323gatekeepers" },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "body": "[{\"state\":\"up\",\"address\":\"h323.example.com\"}]"
+      }
+    },
+    {
       "request": { "method": "POST", "url": "/rest/audio/muted" },
       "response": { "status": 200 }
     },

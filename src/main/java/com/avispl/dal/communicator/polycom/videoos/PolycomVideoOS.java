@@ -16,8 +16,14 @@ import com.avispl.symphony.api.dal.dto.control.call.CallStatus;
 import com.avispl.symphony.api.dal.dto.control.call.DialDevice;
 import com.avispl.symphony.api.dal.dto.control.call.MuteStatus;
 import com.avispl.symphony.api.dal.dto.control.call.PopupMessage;
+import com.avispl.symphony.api.dal.dto.monitor.AudioChannelStats;
+import com.avispl.symphony.api.dal.dto.monitor.CallStats;
+import com.avispl.symphony.api.dal.dto.monitor.ContentChannelStats;
+import com.avispl.symphony.api.dal.dto.monitor.EndpointStatistics;
 import com.avispl.symphony.api.dal.dto.monitor.ExtendedStatistics;
+import com.avispl.symphony.api.dal.dto.monitor.RegistrationStatus;
 import com.avispl.symphony.api.dal.dto.monitor.Statistics;
+import com.avispl.symphony.api.dal.dto.monitor.VideoChannelStats;
 import com.avispl.symphony.api.dal.error.ResourceNotReachableException;
 import com.avispl.symphony.api.dal.monitor.Monitorable;
 import com.avispl.symphony.dal.communicator.RestCommunicator;
@@ -177,6 +183,8 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private long            initTimestamp;
 
     private final APIStateReportHandler stateReporter = new APIStateReportHandler();
+
+    private final EndpointStatistics localEndpointStatistics = new EndpointStatistics();
 
     // -------------------------------------------------------------------------
     // Lifecycle
@@ -340,6 +348,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         if (isGroupEnabled("Collaboration"))            groups.put(PropertyGroup.COLLABORATION.name(),             (p, c) -> fetchCollaboration(p));
         if (isGroupEnabled("ConferencingCapabilities")) groups.put(PropertyGroup.CONFERENCING_CAPABILITIES.name(), (p, c) -> fetchConferencingCapabilities(p));
         if (isGroupEnabled("ActiveSessions"))           groups.put(PropertyGroup.ACTIVE_SESSIONS.name(),           (p, c) -> fetchActiveSessions(p));
+        if (isGroupEnabled("Conferences"))              groups.put("Conferences",                                  (p, c) -> fetchConferences(p));
         if (isGroupEnabled("Applications"))             groups.put(PropertyGroup.APPLICATIONS.name(),              (p, c) -> fetchApplications(p, c));
         if (isGroupEnabled("Peripherals"))              groups.put(PropertyGroup.PERIPHERALS.name(),               (p, c) -> fetchPeripherals(p));
 
@@ -371,10 +380,17 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private List<Statistics> snapshot() {
         stateLock.lock();
         try {
-            ExtendedStatistics stats = new ExtendedStatistics();
-            stats.setStatistics(new HashMap<>(cachedProperties));
-            stats.setControllableProperties(new ArrayList<>(deduplicateControls(cachedControls)));
-            return Collections.singletonList(stats);
+            ExtendedStatistics extended = new ExtendedStatistics();
+            extended.setStatistics(new HashMap<>(cachedProperties));
+            extended.setControllableProperties(new ArrayList<>(deduplicateControls(cachedControls)));
+            EndpointStatistics endpoint = new EndpointStatistics();
+            endpoint.setInCall(localEndpointStatistics.isInCall());
+            endpoint.setCallStats(localEndpointStatistics.getCallStats());
+            endpoint.setAudioChannelStats(localEndpointStatistics.getAudioChannelStats());
+            endpoint.setVideoChannelStats(localEndpointStatistics.getVideoChannelStats());
+            endpoint.setContentChannelStats(localEndpointStatistics.getContentChannelStats());
+            endpoint.setRegistrationStatus(localEndpointStatistics.getRegistrationStatus());
+            return Arrays.asList(extended, endpoint);
         } finally {
             stateLock.unlock();
         }
@@ -697,6 +713,183 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 (authed    ? "AUTHENTICATED" : "NOT AUTHENTICATED"));
             i++;
         }
+    }
+
+    private void fetchConferences(Map<String, String> props) throws Exception {
+        props.keySet().removeIf(k -> k.startsWith(PropertyGroup.ACTIVE_CONFERENCE.prefix));
+
+        ArrayNode conferences = doGet(ApiUri.CONFERENCES, ArrayNode.class);
+        if (conferences == null || conferences.isEmpty()) {
+            localEndpointStatistics.setInCall(false);
+            localEndpointStatistics.setCallStats(null);
+            localEndpointStatistics.setAudioChannelStats(null);
+            localEndpointStatistics.setVideoChannelStats(null);
+            localEndpointStatistics.setRegistrationStatus(fetchRegistrationStatus());
+            return;
+        }
+
+        JsonNode conference = conferences.get(0);
+        int conferenceId = conference.path("id").asInt(-1);
+        boolean inCall = conferenceId > -1;
+        localEndpointStatistics.setInCall(inCall);
+        localEndpointStatistics.setRegistrationStatus(fetchRegistrationStatus());
+
+        if (!inCall) return;
+
+        props.put(PropertyGroup.ACTIVE_CONFERENCE.key("ConferenceId"), String.valueOf(conferenceId));
+        JsonNode startTime = conference.get("startTime");
+        if (startTime != null && !startTime.isNull()) {
+            props.put(PropertyGroup.ACTIVE_CONFERENCE.key("StartTime"), formatEpochMillis(startTime.asLong()));
+        }
+        ArrayNode terminals = (ArrayNode) conference.get("terminals");
+        if (terminals != null) {
+            for (int i = 0; i < terminals.size(); i++) {
+                JsonNode t = terminals.get(i);
+                String n = String.valueOf(i + 1);
+                putText(props, PropertyGroup.ACTIVE_CONFERENCE.key("Terminal" + n + "Address"), t.get("address"));
+                putText(props, PropertyGroup.ACTIVE_CONFERENCE.key("Terminal" + n + "System"),  t.get("systemID"));
+            }
+        }
+        ArrayNode connections = (ArrayNode) conference.get("connections");
+        if (connections != null) {
+            for (int i = 0; i < connections.size(); i++) {
+                JsonNode conn = connections.get(i);
+                String n = String.valueOf(i + 1);
+                putText(props, PropertyGroup.ACTIVE_CONFERENCE.key("Connection" + n + "Type"), conn.get("callType"));
+                putText(props, PropertyGroup.ACTIVE_CONFERENCE.key("Connection" + n + "Info"), conn.get("callInfo"));
+            }
+        }
+
+        CallStats callStats              = new CallStats();
+        AudioChannelStats audioStats     = new AudioChannelStats();
+        VideoChannelStats videoStats     = new VideoChannelStats();
+        ContentChannelStats contentStats = new ContentChannelStats();
+
+        ArrayNode mediaStats = doGet(String.format(ApiUri.CONFERENCE_MEDIASTATS, conferenceId), ArrayNode.class);
+        if (mediaStats != null) {
+            processMediaStats(mediaStats, audioStats, videoStats, callStats);
+        }
+
+        JsonNode sharedResponse = doGet(ApiUri.SHARED_MEDIASTATS, JsonNode.class);
+        if (sharedResponse != null) {
+            ArrayNode vars = (ArrayNode) sharedResponse.get("vars");
+            if (vars != null && vars.size() > 0) {
+                JsonNode shared = vars.get(0);
+                contentStats.setFrameSizeTxWidth(getJsonProperty(shared, "width", Integer.class));
+                contentStats.setFrameSizeTxHeight(getJsonProperty(shared, "height", Integer.class));
+                contentStats.setFrameRateTx(getJsonProperty(shared, "framerate", Float.class));
+                contentStats.setBitRateTx(getJsonProperty(shared, "bitrate", Integer.class));
+            }
+        }
+
+        localEndpointStatistics.setCallStats(callStats);
+        localEndpointStatistics.setAudioChannelStats(audioStats);
+        localEndpointStatistics.setVideoChannelStats(videoStats);
+        localEndpointStatistics.setContentChannelStats(contentStats);
+    }
+
+    private void processMediaStats(ArrayNode mediaStats, AudioChannelStats audio, VideoChannelStats video, CallStats call) {
+        mediaStats.forEach(node -> {
+            String direction = getJsonProperty(node, "mediaDirection", String.class);
+            String type      = getJsonProperty(node, "mediaType", String.class);
+            if (direction == null || type == null) return;
+            switch (direction) {
+                case "RX":
+                    switch (type) {
+                        case "AUDIO":
+                            audio.setBitRateRx(getJsonProperty(node, "actualBitRate", Integer.class));
+                            audio.setJitterRx(getJsonProperty(node, "jitter", Float.class));
+                            audio.setPacketLossRx(getJsonProperty(node, "packetLoss", Integer.class));
+                            audio.setPercentPacketLossRx(getJsonProperty(node, "percentPacketLoss", Float.class));
+                            audio.setCodec(getJsonProperty(node, "mediaAlgorithm", String.class));
+                            break;
+                        case "VIDEO":
+                            video.setBitRateRx(getJsonProperty(node, "actualBitRate", Integer.class));
+                            video.setJitterRx(getJsonProperty(node, "jitter", Float.class));
+                            video.setPacketLossRx(getJsonProperty(node, "packetLoss", Integer.class));
+                            video.setPercentPacketLossRx(getJsonProperty(node, "percentPacketLoss", Float.class));
+                            video.setFrameRateRx(getJsonProperty(node, "actualFrameRate", Float.class));
+                            video.setCodec(getJsonProperty(node, "mediaAlgorithm", String.class));
+                            video.setFrameSizeRx(getJsonProperty(node, "mediaFormat", String.class));
+                            break;
+                        default: break;
+                    }
+                    break;
+                case "TX":
+                    switch (type) {
+                        case "AUDIO":
+                            audio.setBitRateTx(getJsonProperty(node, "actualBitRate", Integer.class));
+                            audio.setJitterTx(getJsonProperty(node, "jitter", Float.class));
+                            audio.setPacketLossTx(getJsonProperty(node, "packetLoss", Integer.class));
+                            audio.setPercentPacketLossTx(getJsonProperty(node, "percentPacketLoss", Float.class));
+                            audio.setCodec(getJsonProperty(node, "mediaAlgorithm", String.class));
+                            break;
+                        case "VIDEO":
+                            video.setBitRateTx(getJsonProperty(node, "actualBitRate", Integer.class));
+                            video.setJitterTx(getJsonProperty(node, "jitter", Float.class));
+                            video.setPacketLossTx(getJsonProperty(node, "packetLoss", Integer.class));
+                            video.setPercentPacketLossTx(getJsonProperty(node, "percentPacketLoss", Float.class));
+                            video.setFrameRateTx(getJsonProperty(node, "actualFrameRate", Float.class));
+                            video.setCodec(getJsonProperty(node, "mediaAlgorithm", String.class));
+                            video.setFrameSizeTx(getJsonProperty(node, "mediaFormat", String.class));
+                            break;
+                        default: break;
+                    }
+                    break;
+                default: break;
+            }
+        });
+        call.setTotalPacketLossRx(sumIntegers(audio.getPacketLossRx(), video.getPacketLossRx()));
+        call.setTotalPacketLossTx(sumIntegers(audio.getPacketLossTx(), video.getPacketLossTx()));
+        call.setPercentPacketLossRx(sumFloats(audio.getPercentPacketLossRx(), video.getPercentPacketLossRx()));
+        call.setPercentPacketLossTx(sumFloats(audio.getPercentPacketLossTx(), video.getPercentPacketLossTx()));
+        call.setCallRateRx(sumIntegers(audio.getBitRateRx(), video.getBitRateRx()));
+        call.setCallRateTx(sumIntegers(audio.getBitRateTx(), video.getBitRateTx()));
+    }
+
+    private RegistrationStatus fetchRegistrationStatus() {
+        RegistrationStatus status = new RegistrationStatus();
+        try {
+            JsonNode sipServers = doGet(ApiUri.SIP_SERVERS, JsonNode.class);
+            if (sipServers != null && sipServers.isArray() && sipServers.size() > 0) {
+                JsonNode s = sipServers.get(0);
+                status.setSipRegistered("up".equalsIgnoreCase(s.path("state").asText()));
+                if (s.has("address")) status.setSipRegistrar(s.get("address").asText());
+            }
+        } catch (Exception e) {
+            logger.warn("SIP server status unavailable: " + e.getMessage());
+        }
+        try {
+            JsonNode h323Servers = doGet(ApiUri.H323_SERVERS, JsonNode.class);
+            if (h323Servers != null && h323Servers.isArray() && h323Servers.size() > 0) {
+                JsonNode s = h323Servers.get(0);
+                status.setH323Registered("up".equalsIgnoreCase(s.path("state").asText()));
+                if (s.has("address")) status.setH323Gatekeeper(s.get("address").asText());
+            }
+        } catch (Exception e) {
+            logger.warn("H.323 gatekeeper status unavailable: " + e.getMessage());
+        }
+        return status;
+    }
+
+    @SuppressWarnings("unchecked")
+    private <T> T getJsonProperty(JsonNode node, String field, Class<T> type) {
+        JsonNode child = node.path(field);
+        if (child.isMissingNode() || child.isNull()) return null;
+        if (type == String.class)  return (T) child.asText();
+        if (type == Integer.class) return (T) Integer.valueOf(child.asInt());
+        if (type == Float.class)   return (T) Float.valueOf((float) child.asDouble());
+        return null;
+    }
+
+    private Integer sumIntegers(Integer a, Integer b) {
+        if (a == null && b == null) return null;
+        return (a == null ? 0 : a) + (b == null ? 0 : b);
+    }
+
+    private Float sumFloats(Float a, Float b) {
+        if (a == null && b == null) return null;
+        return (a == null ? 0f : a) + (b == null ? 0f : b);
     }
 
     private void fetchApplications(Map<String, String> props, List<AdvancedControllableProperty> controls)
