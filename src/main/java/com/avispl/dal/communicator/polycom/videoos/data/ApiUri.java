@@ -44,6 +44,7 @@ public final class ApiUri {
     public static final String PERIPHERAL_DEVICES   = "rest/current/devicemanagement/devices";
 
     public static final String CONFERENCES           = "rest/conferences";
+    public static final String CONFERENCE            = "rest/conferences/%s";
     public static final String CONFERENCE_MEDIASTATS = "rest/conferences/%s/mediastats";
     public static final String SHARED_MEDIASTATS     = "rest/mediastats";
     public static final String SIP_SERVERS           = "rest/system/sipservers";

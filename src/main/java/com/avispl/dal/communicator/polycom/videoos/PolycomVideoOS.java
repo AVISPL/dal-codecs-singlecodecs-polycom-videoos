@@ -71,10 +71,12 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     // Constants
     // -------------------------------------------------------------------------
 
-    private static final int CONTROL_COOLDOWN_MS   = 5_000;
-    private static final int REBOOT_GRACE_MS        = 200_000;
-    private static final int GROUP_FETCH_TIMEOUT_S  = 30;
-    private static final int THREAD_POOL_SIZE       = 12;
+    private static final int    CONTROL_COOLDOWN_MS    = 5_000;
+    private static final int    REBOOT_GRACE_MS        = 200_000;
+    private static final int    GROUP_FETCH_TIMEOUT_S  = 30;
+    private static final int    THREAD_POOL_SIZE       = 12;
+    private static final int    MAX_DIAL_POLL_ATTEMPTS = 5;
+    private static final String CALL_ID_TEMPLATE       = "%s:%s:%s:%s";
 
     // DateTimeFormatter is immutable and thread-safe; one instance for the adapter lifetime
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
@@ -169,6 +171,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private final List<AdvancedControllableProperty> cachedControls   = new ArrayList<>();
 
     private List<String> displayPropertyGroups = new ArrayList<>(Collections.singletonList("All"));
+    private int          defaultCallRate        = 1920;
 
     private long    lastPollTimestamp;
     private long    lastControlTimestamp;
@@ -274,11 +277,32 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     // Configuration setters
     // -------------------------------------------------------------------------
 
+    private static final Map<String, List<String>> PROPERTY_GROUP_PRESETS;
+    static {
+        Map<String, List<String>> m = new LinkedHashMap<>();
+        m.put("Full",          Collections.singletonList("All"));
+        m.put("System",        Arrays.asList("SystemStatus", "System", "LANStatus"));
+        m.put("Audio",         Arrays.asList("SystemStatus", "System", "Audio", "Microphone"));
+        m.put("Collaboration", Arrays.asList("SystemStatus", "System", "Calendar", "Collaboration", "ConferencingCapabilities", "ActiveSessions"));
+        m.put("Applications",  Arrays.asList("System", "Applications"));
+        m.put("Peripherals",   Arrays.asList("System", "Peripherals"));
+        PROPERTY_GROUP_PRESETS = Collections.unmodifiableMap(m);
+    }
+
     public void setDisplayPropertyGroups(String value) {
         this.displayPropertyGroups = Arrays.stream(value.split(","))
             .map(String::trim)
             .filter(s -> !s.isEmpty())
             .collect(Collectors.toList());
+    }
+
+    public void setDisplayPropertyGroupsPreset(String preset) {
+        List<String> groups = PROPERTY_GROUP_PRESETS.get(preset);
+        if (groups == null) {
+            logger.warn("Unknown displayPropertyGroupsPreset '" + preset + "'. Valid values: " + PROPERTY_GROUP_PRESETS.keySet());
+            return;
+        }
+        this.displayPropertyGroups = new ArrayList<>(groups);
     }
 
     // -------------------------------------------------------------------------
@@ -475,16 +499,157 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     }
 
     // -------------------------------------------------------------------------
-    // CallController — not yet implemented
+    // CallController
     // -------------------------------------------------------------------------
 
-    @Override public String     dial(DialDevice device)           throws Exception { throw new UnsupportedOperationException("dial"); }
-    @Override public void       hangup(String callId)             throws Exception { throw new UnsupportedOperationException("hangup"); }
-    @Override public CallStatus retrieveCallStatus(String callId) throws Exception { throw new UnsupportedOperationException("retrieveCallStatus"); }
-    @Override public MuteStatus retrieveMuteStatus()              throws Exception { throw new UnsupportedOperationException("retrieveMuteStatus"); }
-    @Override public void       mute()                            throws Exception { throw new UnsupportedOperationException("mute"); }
-    @Override public void       unmute()                          throws Exception { throw new UnsupportedOperationException("unmute"); }
-    @Override public void       sendMessage(PopupMessage message) throws Exception { throw new UnsupportedOperationException("sendMessage"); }
+    @Override
+    public String dial(DialDevice device) throws Exception {
+        ObjectNode body = JsonNodeFactory.instance.objectNode();
+        body.put("address", device.getDialString());
+        int speed = device.getCallSpeed() != null ? device.getCallSpeed() : 0;
+        body.put("rate", speed > 0 ? speed : defaultCallRate);
+        Object protocol = device.getProtocol();
+        if (protocol != null) body.put("dialType", protocol.toString());
+
+        doPost(ApiUri.CONFERENCES, body, ArrayNode.class);
+
+        String dialString = retrieveDeviceDialString();
+        for (int i = 0; i < MAX_DIAL_POLL_ATTEMPTS; i++) {
+            ArrayNode conferences = listConferenceCalls();
+            if (!conferences.isEmpty()) {
+                return generateCallId(conferences.get(0), null, dialString);
+            }
+            Thread.sleep(1000);
+        }
+        throw new RuntimeException("Dial to " + device.getDialString() + " did not connect within timeout.");
+    }
+
+    @Override
+    public void hangup(String callId) throws Exception {
+        if (callId != null && !callId.isEmpty()) {
+            String confIdStr = callId.split(":")[0];
+            doDelete(String.format(ApiUri.CONFERENCE, confIdStr));
+        } else {
+            for (JsonNode node : listConferenceCalls()) {
+                doDelete(String.format(ApiUri.CONFERENCE, node.path("id").asInt()));
+            }
+        }
+    }
+
+    @Override
+    public CallStatus retrieveCallStatus(String callId) throws Exception {
+        String dialString = retrieveDeviceDialString();
+        ArrayNode conferences = listConferenceCalls();
+
+        if (conferences.isEmpty()) {
+            return generateCallStatus(callId, CallStatus.CallStatusState.Disconnected);
+        }
+
+        if (callId != null && !callId.isEmpty()) {
+            String[] parts = callId.split(":");
+            int targetConfId = -1;
+            try { targetConfId = Integer.parseInt(parts[0]); } catch (NumberFormatException ignored) {}
+            if (targetConfId >= 0) {
+                for (JsonNode conf : conferences) {
+                    if (conf.path("id").asInt(-1) == targetConfId) {
+                        int connId = parts.length > 1 ? parseIntOrZero(parts[1]) : 0;
+                        return generateCallStatus(
+                            generateCallId(conf, connId > 0 ? connId : null, dialString),
+                            CallStatus.CallStatusState.Connected);
+                    }
+                }
+                return generateCallStatus(callId, CallStatus.CallStatusState.Disconnected);
+            }
+        }
+
+        return generateCallStatus(
+            generateCallId(conferences.get(0), null, dialString),
+            CallStatus.CallStatusState.Connected);
+    }
+
+    @Override
+    public MuteStatus retrieveMuteStatus() throws Exception {
+        JsonNode muted = doGet(ApiUri.AUDIO_MUTED, JsonNode.class);
+        if (muted == null) throw new RuntimeException("Unable to retrieve mute status.");
+        return muted.asBoolean(false) ? MuteStatus.Muted : MuteStatus.Unmuted;
+    }
+
+    @Override
+    public void mute() throws Exception {
+        doPost(ApiUri.AUDIO_MUTED, true);
+        stateLock.lock();
+        try {
+            updateCachedControl(ControlKey.MUTE_MICROPHONES, "1");
+            lastControlTimestamp = System.currentTimeMillis();
+        } finally {
+            stateLock.unlock();
+        }
+    }
+
+    @Override
+    public void unmute() throws Exception {
+        doPost(ApiUri.AUDIO_MUTED, false);
+        stateLock.lock();
+        try {
+            updateCachedControl(ControlKey.MUTE_MICROPHONES, "0");
+            lastControlTimestamp = System.currentTimeMillis();
+        } finally {
+            stateLock.unlock();
+        }
+    }
+
+    @Override
+    public void sendMessage(PopupMessage message) throws Exception {
+        throw new UnsupportedOperationException("sendMessage");
+    }
+
+    private ArrayNode listConferenceCalls() throws Exception {
+        ArrayNode response = doGet(ApiUri.CONFERENCES, ArrayNode.class);
+        return response != null ? response : JsonNodeFactory.instance.arrayNode();
+    }
+
+    private String buildCallId(int conferenceId, int connectionId, long startTime, String dialString) {
+        return String.format(CALL_ID_TEMPLATE, conferenceId, connectionId, startTime,
+            dialString != null ? dialString : "");
+    }
+
+    private String generateCallId(JsonNode conf, Integer targetConnectionId, String dialString) {
+        int confId = conf.path("id").asInt(0);
+        JsonNode connections = conf.get("connections");
+        int connId = 0;
+        long startTime = 0;
+        if (connections != null && connections.isArray() && connections.size() > 0) {
+            JsonNode conn = connections.get(0);
+            if (targetConnectionId != null) {
+                for (JsonNode c : connections) {
+                    if (c.path("id").asInt(-1) == targetConnectionId) { conn = c; break; }
+                }
+            }
+            connId    = conn.path("id").asInt(0);
+            startTime = conn.path("startTime").asLong(0);
+        }
+        return buildCallId(confId, connId, startTime, dialString);
+    }
+
+    private CallStatus generateCallStatus(String callId, CallStatus.CallStatusState state) {
+        CallStatus status = new CallStatus();
+        status.setCallId(callId);
+        status.setCallStatusState(state);
+        return status;
+    }
+
+    private String retrieveDeviceDialString() {
+        String sip  = cachedProperties.get(PropertyGroup.SYSTEM.key("SIPUsername"));
+        String h323 = cachedProperties.get(PropertyGroup.SYSTEM.key("H323Extension"));
+        String name = cachedProperties.get(PropertyGroup.SYSTEM.key("Name"));
+        if (sip  != null && !sip.isEmpty())  return sip;
+        if (h323 != null && !h323.isEmpty()) return h323;
+        return name != null ? name : "";
+    }
+
+    private static int parseIntOrZero(String s) {
+        try { return Integer.parseInt(s); } catch (NumberFormatException e) { return 0; }
+    }
 
     // -------------------------------------------------------------------------
     // Group fetchers
@@ -782,6 +947,17 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             }
         }
 
+        callStats.setRequestedCallRate(defaultCallRate);
+        String dialString = retrieveDeviceDialString();
+        callStats.setRemoteAddress(dialString);
+        if (connections != null && connections.size() > 0) {
+            String callType = connections.get(0).path("callType").asText(null);
+            if (callType != null) callStats.setProtocol(callType);
+            int  connId    = connections.get(0).path("id").asInt(0);
+            long connStart = connections.get(0).path("startTime").asLong(0);
+            callStats.setCallId(buildCallId(conferenceId, connId, connStart, dialString));
+        }
+
         localEndpointStatistics.setCallStats(callStats);
         localEndpointStatistics.setAudioChannelStats(audioStats);
         localEndpointStatistics.setVideoChannelStats(videoStats);
@@ -849,6 +1025,11 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
     private RegistrationStatus fetchRegistrationStatus() {
         RegistrationStatus status = new RegistrationStatus();
+        if ("1".equals(cachedProperties.get(ControlKey.DEVICE_MODE))) {
+            status.setSipRegistered(true);
+            status.setH323Registered(true);
+            return status;
+        }
         try {
             JsonNode sipServers = doGet(ApiUri.SIP_SERVERS, JsonNode.class);
             if (sipServers != null && sipServers.isArray() && sipServers.size() > 0) {
@@ -1108,4 +1289,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
     public int  getApiPollingInterval()       { return pollingIntervalMs; }
     public void setApiPollingInterval(int ms) { this.pollingIntervalMs = ms; }
+
+    public int  getDefaultCallRate()          { return defaultCallRate; }
+    public void setDefaultCallRate(int kbps)  { this.defaultCallRate = kbps; }
 }
