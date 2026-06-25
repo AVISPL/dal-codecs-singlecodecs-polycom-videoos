@@ -29,11 +29,11 @@ class PolycomVideoOSIntegrationTest {
     @BeforeEach
     void setup() throws Exception {
         adapter = new PolycomVideoOS();
-        adapter.setHost("172.31.200.19");
+        adapter.setHost("172.0.0.1");
         adapter.setProtocol("https");
         adapter.setPort(443);
         adapter.setLogin("admin");
-        adapter.setPassword("1234");
+        adapter.setPassword("");
         adapter.setApiPollingInterval(60_000);
         adapter.init();
     }
@@ -189,6 +189,46 @@ class PolycomVideoOSIntegrationTest {
         adapter.controlProperty(cp);
 
         assertNotNull(stats().get(ControlKey.DEVICE_MODE));
+    }
+
+    @Test
+    void controlProperty_signageMode_toggleAndVerify() throws Exception {
+        adapter.getMultipleStatistics();
+        String current = stats().get(ControlKey.SIGNAGE_MODE);
+        String toggled  = "1".equals(current) ? "0" : "1";
+
+        ControllableProperty cp = new ControllableProperty();
+        cp.setProperty(ControlKey.SIGNAGE_MODE);
+        cp.setValue(toggled);
+        adapter.controlProperty(cp);
+
+        assertEquals(toggled, stats().get(ControlKey.SIGNAGE_MODE),
+            "Cache should reflect toggled signage mode immediately");
+    }
+
+    @Test
+    void controlProperty_appProviderSelect_thenSave() throws Exception {
+        adapter.getMultipleStatistics();
+
+        AdvancedControllableProperty providerCtrl = findControl(ControlKey.APP_PROVIDER);
+        assertNotNull(providerCtrl, "APP_PROVIDER control must be present before this test");
+        AdvancedControllableProperty.DropDown dd = (AdvancedControllableProperty.DropDown) providerCtrl.getType();
+        String targetProvider = dd.getOptions()[0];
+
+        ControllableProperty selectCp = new ControllableProperty();
+        selectCp.setProperty(ControlKey.APP_PROVIDER);
+        selectCp.setValue(targetProvider);
+        adapter.controlProperty(selectCp);
+        assertEquals(targetProvider, stats().get(ControlKey.APP_PROVIDER),
+            "Cache should reflect selected provider immediately");
+
+        AdvancedControllableProperty saveCtrl = findControl(ControlKey.APP_SAVE);
+        assertNotNull(saveCtrl, "APP_SAVE control must appear after provider is selected");
+
+        ControllableProperty saveCp = new ControllableProperty();
+        saveCp.setProperty(ControlKey.APP_SAVE);
+        saveCp.setValue("");
+        adapter.controlProperty(saveCp);
     }
 
     @Test
