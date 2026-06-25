@@ -13,10 +13,9 @@ public final class ControlKey {
 
     private ControlKey() {}
 
-    // Audio group
-    public static final String MUTE_MICROPHONES = "Audio#MicrophonesMuted";
-    public static final String MUTE_VIDEO       = "Audio#VideoMuted";
-    public static final String VOLUME           = "Audio#Volume";
+    public static final String MUTE_MICROPHONES = "MuteMicrophones";
+    public static final String MUTE_VIDEO       = "MuteLocalVideo";
+    public static final String VOLUME           = "AudioVolume";
 
     // System group
     public static final String DEVICE_MODE  = "System#DeviceMode";
