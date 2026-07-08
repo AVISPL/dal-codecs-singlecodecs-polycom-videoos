@@ -3,6 +3,11 @@
  */
 package com.avispl.dal.communicator.polycom.videoos.data;
 
+/**
+ * Constant values to be used in adapter
+ *
+ * @author Maksym.Rossiitsev/Symphony Team
+ * */
 public final class Values {
 
     private Values() {}

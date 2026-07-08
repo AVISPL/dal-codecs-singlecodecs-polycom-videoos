@@ -10,6 +10,8 @@ package com.avispl.dal.communicator.polycom.videoos.data;
  * Usage:
  *   stats.put(PropertyGroup.SYSTEM.key("SerialNumber"), value);
  *   stats.keySet().removeIf(k -> k.startsWith(PropertyGroup.SYSTEM.prefix));
+ *
+ * @author Maksym.Rossiitsev/Symphony Team
  */
 public enum PropertyGroup {
 
