@@ -8,6 +8,8 @@ package com.avispl.dal.communicator.polycom.videoos.data;
  * Grouped controls use the group prefix so they appear alongside their
  * related monitored data in the UI. The sole ungrouped control is Reboot,
  * which has no natural group.
+ *
+ * @author Maksym.Rossiitsev/Symphony Team
  */
 public final class ControlKey {
 

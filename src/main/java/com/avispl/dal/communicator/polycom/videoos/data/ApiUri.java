@@ -5,6 +5,8 @@ package com.avispl.dal.communicator.polycom.videoos.data;
 
 /**
  * Poly VideoOS REST API endpoint paths.
+ *
+ * @author Maksym.Rossiitsev/Symphony Team
  */
 public final class ApiUri {
 
