@@ -296,7 +296,7 @@ class PolycomVideoOSUnitTest {
     void setDisplayPropertyGroupsPreset_multipleGroups_activePropertyGroupsIsAlphabetical() throws Exception {
         adapter.setDisplayPropertyGroupsPreset("DeviceMode");
         Map<String, String> props = stats();
-        assertEquals("ActiveSessions, Applications, Audio, Microphone, Peripherals, System, SystemStatus",
+        assertEquals("ActiveSessions, Applications, Audio, Conferences, Microphone, Peripherals, System, SystemStatus",
             props.get(PropertyGroup.ADAPTER_METADATA.key("ActivePropertyGroups")));
     }
 

@@ -10,6 +10,8 @@ import java.util.function.Consumer;
 /**
  * Tracks per-group API failures to allow graceful degradation when individual
  * device endpoints are unavailable.
+ *
+ * @author Maksym.Rossiitsev/Symphony Team
  */
 public class APIStateReportHandler {
 

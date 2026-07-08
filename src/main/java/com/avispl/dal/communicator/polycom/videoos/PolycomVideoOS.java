@@ -59,11 +59,20 @@ import static com.avispl.symphony.dal.util.ControllablePropertyFactory.*;
  * Authentication uses a session cookie and XSRF token pair. The session
  * endpoint and XSRF token behavior differ from the public API documentation
  * — see {@link PolycomVideoOSInterceptor} and {@link #authenticate()}.
+ *
+ * @author Maksym.Rossiitsev/Symphony Team
  */
 public class PolycomVideoOS extends RestCommunicator implements CallController, Monitorable, Controller {
 
     @FunctionalInterface
     private interface GroupFetcher {
+        /**
+         * Fetches one property group's data from the device.
+         *
+         * @param props destination map for monitored properties
+         * @param controls destination list for controllable properties
+         * @throws Exception if the underlying device API call fails
+         */
         void fetch(Map<String, String> props, List<AdvancedControllableProperty> controls) throws Exception;
     }
 
@@ -87,8 +96,24 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
     private final ClientHttpRequestInterceptor interceptor = new PolycomVideoOSInterceptor();
 
+    /**
+     * Intercepts every HTTP response to capture the rotating XSRF token, and to transparently
+     * re-authenticate and retry a request when the session has expired (HTTP 403 on a GET).
+     */
     private class PolycomVideoOSInterceptor implements ClientHttpRequestInterceptor {
 
+        /**
+         * Captures the XSRF token from every response, then re-authenticates and retries the
+         * request if it failed with 403 due to an expired session (session creation and
+         * non-GET requests are excluded, since a stale session can't affect the login call and
+         * retrying a write is unsafe).
+         *
+         * @param request the outgoing HTTP request
+         * @param body the request body bytes
+         * @param execution the request execution chain
+         * @return the response from the retried request, or the original response if no retry was needed or possible
+         * @throws IOException if the underlying request execution fails
+         */
         @Override
         public ClientHttpResponse intercept(HttpRequest request, byte[] body, ClientHttpRequestExecution execution)
                 throws IOException {
@@ -121,6 +146,18 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             }
         }
 
+        /**
+         * Re-authenticates and retries the given request once. If re-authentication fails or
+         * the device is unreachable, the session is invalidated and the original (403) response
+         * is returned instead of throwing.
+         *
+         * @param request the request to retry
+         * @param body the request body bytes
+         * @param execution the request execution chain
+         * @param original the original 403 response, returned as a fallback if re-auth fails
+         * @return the retried response, or {@code original} if re-authentication failed
+         * @throws IOException if the retried request execution fails
+         */
         private ClientHttpResponse reAuthAndRetry(HttpRequest request, byte[] body,
                 ClientHttpRequestExecution execution, ClientHttpResponse original) throws IOException {
             try {
@@ -143,6 +180,12 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             }
         }
 
+        /**
+         * Extracts the rotating {@code XSRF-TOKEN} cookie from a response's {@code Set-Cookie}
+         * headers, if present, and stores it for use on subsequent requests.
+         *
+         * @param response the HTTP response to inspect
+         */
         private void captureXsrfToken(ClientHttpResponse response) {
             List<String> cookies = response.getHeaders().get("set-cookie");
             if (cookies == null) {
@@ -198,10 +241,20 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     // Lifecycle
     // -------------------------------------------------------------------------
 
+    /**
+     * Creates the adapter and enables trust-all TLS, since Poly VideoOS devices present a
+     * self-signed certificate by default.
+     */
     public PolycomVideoOS() {
         setTrustAllCertificates(true);
     }
 
+    /**
+     * Initializes adapter state: records the startup timestamp, loads the adapter version
+     * metadata, and starts the fixed thread pool used to fetch property groups concurrently.
+     *
+     * @throws Exception if the superclass initialization or version metadata loading fails
+     */
     @Override
     protected void internalInit() throws Exception {
         super.internalInit();
@@ -211,6 +264,10 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         executor = Executors.newFixedThreadPool(THREAD_POOL_SIZE);
     }
 
+    /**
+     * Tears down the adapter: closes the device session (best-effort) and shuts down the
+     * group-fetch thread pool.
+     */
     @Override
     protected void internalDestroy() {
         if (sessionId != null) {
@@ -223,6 +280,13 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         super.internalDestroy();
     }
 
+    /**
+     * Registers {@link #interceptor} on the shared {@link RestTemplate} exactly once, so every
+     * request carries session/XSRF headers and every response is inspected for a rotated token.
+     *
+     * @return the REST template used for all device requests
+     * @throws Exception if the superclass fails to build the template
+     */
     @Override
     protected RestTemplate obtainRestTemplate() throws Exception {
         RestTemplate template = super.obtainRestTemplate();
@@ -236,6 +300,14 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     // Authentication
     // -------------------------------------------------------------------------
 
+    /**
+     * Logs in to the device, replacing any existing session. Posts credentials to the session
+     * endpoint and stores the returned session ID; the XSRF token is captured separately by
+     * {@link PolycomVideoOSInterceptor#captureXsrfToken}.
+     *
+     * @throws Exception if the login request fails; specifically a {@link FailedLoginException}
+     *                    if the device rejects the credentials
+     */
     @Override
     protected void authenticate() throws Exception {
         if (sessionId != null) {
@@ -256,6 +328,16 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         authFailed = false;
     }
 
+    /**
+     * Adds the session and XSRF cookies/headers required by every authenticated request.
+     * Skipped for the session-creation call itself, since no session exists yet at that point.
+     *
+     * @param method the HTTP method of the outgoing request
+     * @param uri the request URI
+     * @param headers the headers to augment
+     * @return the augmented headers
+     * @throws Exception if the superclass header logic fails
+     */
     @Override
     protected HttpHeaders putExtraRequestHeaders(HttpMethod method, String uri, HttpHeaders headers) throws Exception {
         boolean isSessionCreate = HttpMethod.POST.equals(method) && uri.equals(ApiUri.SESSION);
@@ -266,12 +348,19 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         return super.putExtraRequestHeaders(method, uri, headers);
     }
 
+    /** Clears the cached session ID and XSRF token and marks authentication as failed, forcing re-login on the next request. */
     private void invalidateSession() {
         sessionId  = null;
         xsrfToken  = null;
         authFailed = true;
     }
 
+    /**
+     * Re-authenticates if there is no valid session (no session ID/XSRF token yet, or a
+     * previous request marked authentication as failed).
+     *
+     * @throws Exception if re-authentication fails
+     */
     private void ensureAuthenticated() throws Exception {
         if (authFailed || sessionId == null || xsrfToken == null) {
             authenticate();
@@ -291,6 +380,12 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         PROPERTY_GROUP_PRESETS = Collections.unmodifiableMap(m);
     }
 
+    /**
+     * Sets which property groups are collected and reported, from a comma-separated list
+     * (e.g. {@code "Audio,Camera,System"}, or {@code "All"} for every group).
+     *
+     * @param value comma-separated group names; surrounding whitespace is trimmed and empty entries are ignored
+     */
     public void setDisplayPropertyGroups(String value) {
         this.displayPropertyGroups = Arrays.stream(value.split(","))
             .map(String::trim)
@@ -299,6 +394,13 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             .collect(Collectors.toList());
     }
 
+    /**
+     * Sets {@link #displayPropertyGroups} to one of the predefined combinations in
+     * {@link #PROPERTY_GROUP_PRESETS} ({@code Default}, {@code AppMode}, {@code DeviceMode}).
+     * Unknown preset names are logged and ignored, leaving the current configuration unchanged.
+     *
+     * @param preset the preset name to apply
+     */
     public void setDisplayPropertyGroupsPreset(String preset) {
         List<String> groups = PROPERTY_GROUP_PRESETS.get(preset);
         if (groups == null) {
@@ -312,6 +414,16 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     // Monitorable
     // -------------------------------------------------------------------------
 
+    /**
+     * Returns the adapter's current {@link ExtendedStatistics} and {@link EndpointStatistics}.
+     * If the cache is still fresh, a control was applied recently, or a refresh is already in
+     * progress, the cached snapshot is returned immediately without contacting the device.
+     * Otherwise, every enabled property group is fetched concurrently, merged into the cache,
+     * and the resulting snapshot is returned.
+     *
+     * @return a two-element list containing the {@link ExtendedStatistics} and {@link EndpointStatistics}
+     * @throws Exception if authentication fails
+     */
     @Override
     public List<Statistics> getMultipleStatistics() throws Exception {
         updatePollingInterval();
@@ -378,6 +490,16 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         return snapshot();
     }
 
+    /**
+     * Fetches every enabled property group concurrently on {@link #executor}, writing results
+     * into the shared {@code props}/{@code controls} accumulators. A group that throws is
+     * logged and skipped; all other groups still complete. Waits up to
+     * {@link #GROUP_FETCH_TIMEOUT_S} seconds for all groups to finish before returning with
+     * whatever completed.
+     *
+     * @param props accumulator for monitored properties from all enabled groups
+     * @param controls accumulator for controllable properties from all enabled groups
+     */
     private void runAllGroups(Map<String, String> props, List<AdvancedControllableProperty> controls) {
         // fetchSystem (GET /system + POST /config) and fetchSystemModes (GET /mode/device + GET /mode/signage)
         // are separated so the mode reads run in parallel with the heavier system/config calls.
@@ -445,6 +567,12 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
     }
 
+    /**
+     * Builds the {@link ExtendedStatistics} and {@link EndpointStatistics} to return from the
+     * current cache, without contacting the device.
+     *
+     * @return a two-element list containing the {@link ExtendedStatistics} and {@link EndpointStatistics}
+     */
     private List<Statistics> snapshot() {
         stateLock.lock();
         try {
@@ -468,6 +596,14 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     // Controller
     // -------------------------------------------------------------------------
 
+    /**
+     * Applies a single control. The device API call (Phase 1) runs without holding
+     * {@link #stateLock}; only once it succeeds is the local cache updated (Phase 2), so a
+     * failed call never leaves the cache reflecting a change that didn't actually happen.
+     *
+     * @param cp the property name/value to apply
+     * @throws Exception if the underlying device API call fails
+     */
     @Override
     public void controlProperty(ControllableProperty cp) throws Exception {
         String property = cp.getProperty();
@@ -566,6 +702,12 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
     }
 
+    /**
+     * Applies each control in the list sequentially via {@link #controlProperty}.
+     *
+     * @param list the controls to apply; a null or empty list is a no-op
+     * @throws Exception if any individual control application fails
+     */
     @Override
     public void controlProperties(List<ControllableProperty> list) throws Exception {
         if (list == null || list.isEmpty()) {
@@ -578,6 +720,14 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     // CallController
     // -------------------------------------------------------------------------
 
+    /**
+     * Starts a call to the given destination and polls for the resulting conference to appear
+     * (up to {@link #MAX_DIAL_POLL_ATTEMPTS} times, one second apart).
+     *
+     * @param device the dial destination, protocol, and requested call speed
+     * @return the call ID of the newly connected conference
+     * @throws Exception if the dial request fails, or the call does not connect within the polling window
+     */
     @Override
     public String dial(DialDevice device) throws Exception {
         ObjectNode body = JsonNodeFactory.instance.objectNode();
@@ -602,6 +752,12 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         throw new RuntimeException("Dial to " + device.getDialString() + " did not connect within timeout.");
     }
 
+    /**
+     * Ends a specific call, or every active conference if no call ID is given.
+     *
+     * @param callId the call ID to hang up, or null/empty to hang up all active conferences
+     * @throws Exception if the underlying device API call fails
+     */
     @Override
     public void hangup(String callId) throws Exception {
         if (callId != null && !callId.isEmpty()) {
@@ -614,6 +770,14 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
     }
 
+    /**
+     * Reports whether the given call (or, if none specified, the first active conference) is
+     * currently connected.
+     *
+     * @param callId the call ID to check, or null/empty to check the first active conference
+     * @return the current call status
+     * @throws Exception if the underlying device API call fails
+     */
     @Override
     public CallStatus retrieveCallStatus(String callId) throws Exception {
         String dialString = retrieveDeviceDialString();
@@ -645,6 +809,12 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             CallStatus.CallStatusState.Connected);
     }
 
+    /**
+     * Retrieves the device's current microphone mute state.
+     *
+     * @return the device's current microphone mute state
+     * @throws Exception if the mute status cannot be retrieved from the device
+     */
     @Override
     public MuteStatus retrieveMuteStatus() throws Exception {
         JsonNode muted = doGet(ApiUri.AUDIO_MUTED, JsonNode.class);
@@ -654,6 +824,11 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         return muted.asBoolean(false) ? MuteStatus.Muted : MuteStatus.Unmuted;
     }
 
+    /**
+     * Mutes the microphones and immediately updates the local control cache to reflect the change.
+     *
+     * @throws Exception if the underlying device API call fails
+     */
     @Override
     public void mute() throws Exception {
         doPost(ApiUri.AUDIO_MUTED, true);
@@ -666,6 +841,11 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
     }
 
+    /**
+     * Unmutes the microphones and immediately updates the local control cache to reflect the change.
+     *
+     * @throws Exception if the underlying device API call fails
+     */
     @Override
     public void unmute() throws Exception {
         doPost(ApiUri.AUDIO_MUTED, false);
@@ -678,21 +858,52 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
     }
 
+    /**
+     * Not implemented — the device's REST API has no popup-message endpoint.
+     *
+     * @param message unused
+     * @throws UnsupportedOperationException always
+     */
     @Override
     public void sendMessage(PopupMessage message) throws Exception {
         throw new UnsupportedOperationException("sendMessage");
     }
 
+    /**
+     * Retrieves the device's currently active conferences.
+     *
+     * @return the device's currently active conferences, or an empty array if there are none
+     * @throws Exception if the underlying device API call fails
+     */
     private ArrayNode listConferenceCalls() throws Exception {
         ArrayNode response = doGet(ApiUri.CONFERENCES, ArrayNode.class);
         return response != null ? response : JsonNodeFactory.instance.arrayNode();
     }
 
+    /**
+     * Builds a call ID string encoding everything needed to look up a specific call/connection
+     * again later (see {@link #retrieveCallStatus}).
+     *
+     * @param conferenceId the conference ID
+     * @param connectionId the connection ID within the conference
+     * @param startTime the connection start time (epoch millis)
+     * @param dialString the dialed address, or null
+     * @return the composite call ID, in {@code conferenceId:connectionId:startTime:dialString} form
+     */
     private String buildCallId(int conferenceId, int connectionId, long startTime, String dialString) {
         return String.format(CALL_ID_TEMPLATE, conferenceId, connectionId, startTime,
             dialString != null ? dialString : "");
     }
 
+    /**
+     * Builds a call ID for a conference, using a specific connection if given, otherwise the
+     * conference's first connection.
+     *
+     * @param conf the conference JSON node
+     * @param targetConnectionId the connection ID to use, or null to use the first connection
+     * @param dialString the dialed address, or null
+     * @return the composite call ID for the selected connection
+     */
     private String generateCallId(JsonNode conf, Integer targetConnectionId, String dialString) {
         int confId = conf.path("id").asInt(0);
         JsonNode connections = conf.get("connections");
@@ -711,6 +922,13 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         return buildCallId(confId, connId, startTime, dialString);
     }
 
+    /**
+     * Builds a {@link CallStatus} object from a call ID and state.
+     *
+     * @param callId the call ID to report
+     * @param state the call state to report
+     * @return a {@link CallStatus} combining the given ID and state
+     */
     private CallStatus generateCallStatus(String callId, CallStatus.CallStatusState state) {
         CallStatus status = new CallStatus();
         status.setCallId(callId);
@@ -718,6 +936,12 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         return status;
     }
 
+    /**
+     * Resolves the address to report as this device's own dial string, preferring SIP, then
+     * H.323, then falling back to the system name.
+     *
+     * @return the first non-empty identity in SIP/H.323/system-name order, or an empty string if none are cached
+     */
     private String retrieveDeviceDialString() {
         String sip  = cachedProperties.get(PropertyGroup.SYSTEM.key("SIPUsername"));
         String h323 = cachedProperties.get(PropertyGroup.SYSTEM.key("H323Extension"));
@@ -731,7 +955,10 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         return name != null ? name : "";
     }
 
-    // Must be called under stateLock.
+    /**
+     * Clears the pending application-provider selection if it has been sitting unsaved longer
+     * than {@link #appProviderSelectionTimeoutMin}. Must be called while holding {@link #stateLock}.
+     */
     private void resetProviderSelectionIfExpired() {
         if (selectedApp == null || providerSelectionTimestamp == 0) {
             return;
@@ -745,10 +972,23 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
     }
 
+    /**
+     * Parses a string as an integer, tolerating malformed input.
+     *
+     * @param s the string to parse
+     * @return the parsed integer, or 0 if {@code s} is not a valid integer
+     */
     private static int parseIntOrZero(String s) {
         try { return Integer.parseInt(s); } catch (NumberFormatException e) { return 0; }
     }
 
+    /**
+     * Throws if a device response has an explicit {@code success: false} field.
+     *
+     * @param response the device response to check
+     * @param fallbackMessage the exception message to use if the response provides no {@code reason}
+     * @throws Exception if the response indicates failure
+     */
     private static void assertSuccess(JsonNode response, String fallbackMessage) throws Exception {
         if (response != null && response.has("success") && !response.path("success").asBoolean(true)) {
             String reason = response.path("reason").asText("");
@@ -760,6 +1000,13 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     // Group fetchers
     // -------------------------------------------------------------------------
 
+    /**
+     * Fetches dynamic health indicators from {@code GET /rest/system/status} and reports one
+     * property per status item, keyed by the indicator's PascalCase name.
+     *
+     * @param props destination map for the fetched {@code SystemStatus#*} properties
+     * @throws Exception if the underlying device API call fails
+     */
     private void fetchSystemStatus(Map<String, String> props) throws Exception {
         ArrayNode response = doGet(ApiUri.SYSTEM_STATUS, ArrayNode.class);
         if (response == null) return;
@@ -776,6 +1023,13 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         });
     }
 
+    /**
+     * Fetches device identity, version, and network info from {@code GET /rest/system}, plus
+     * SIP/H.323 identities via {@code POST /rest/config}.
+     *
+     * @param props destination map for the fetched {@code System#*} and {@code LANStatus#*} properties
+     * @throws Exception if either underlying device API call fails
+     */
     private void fetchSystem(Map<String, String> props) throws Exception {
         JsonNode sys = doGet(ApiUri.SYSTEM, JsonNode.class);
         if (sys != null) {
@@ -823,7 +1077,15 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
     }
 
-    // Separated from fetchSystem so mode reads run in parallel with the heavier system/config calls
+    /**
+     * Fetches device mode and signage mode state, populating both their monitored properties
+     * and their paired switch controls. Split out from {@link #fetchSystem} so these two
+     * lightweight reads run concurrently with the heavier system/config calls.
+     *
+     * @param props destination map for the {@code System#DeviceMode}/{@code System#SignageMode} properties
+     * @param controls destination list for the paired switch controls
+     * @throws Exception if either underlying device API call fails
+     */
     private void fetchSystemModes(Map<String, String> props, List<AdvancedControllableProperty> controls)
             throws Exception {
         JsonNode dm = doGet(ApiUri.DEVICE_MODE, JsonNode.class);
@@ -840,6 +1102,15 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
     }
 
+    /**
+     * Fetches volume and mute state from {@code GET /rest/audio}, {@code GET /rest/audio/muted},
+     * and {@code GET /rest/video/local/mute}, populating both monitored properties and their
+     * paired controls.
+     *
+     * @param props destination map for the fetched {@code Audio#*} properties
+     * @param controls destination list for the volume slider and mute switch controls
+     * @throws Exception if any underlying device API call fails
+     */
     private void fetchAudio(Map<String, String> props, List<AdvancedControllableProperty> controls) throws Exception {
         JsonNode audio = doGet(ApiUri.AUDIO, JsonNode.class);
         if (audio != null) {
@@ -868,6 +1139,13 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
     }
 
+    /**
+     * Fetches per-microphone state from {@code GET /rest/audio/microphones}, replacing any
+     * previously reported microphones with the current list.
+     *
+     * @param props destination map for the fetched {@code Microphones#*} properties
+     * @throws Exception if the underlying device API call fails
+     */
     private void fetchMicrophones(Map<String, String> props) throws Exception {
         ArrayNode mics = doGet(ApiUri.AUDIO_MICROPHONES, ArrayNode.class);
         props.keySet().removeIf(k -> k.startsWith("Microphones#"));
@@ -888,6 +1166,14 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
     }
 
+    /**
+     * Fetches near-end camera state from {@code GET /rest/cameras/near/all} and
+     * content-sharing status from {@code GET /rest/cameras/contentstatus}, replacing any
+     * previously reported cameras with the current list.
+     *
+     * @param props destination map for the fetched {@code Camera#*}/{@code Cameras#*} properties
+     * @throws Exception if either underlying device API call fails
+     */
     private void fetchCameras(Map<String, String> props) throws Exception {
         ArrayNode cameras = doGet(ApiUri.CAMERAS_NEAR_ALL, ArrayNode.class);
         props.keySet().removeIf(k -> k.startsWith(PropertyGroup.CAMERA.baseName) || k.startsWith(PropertyGroup.CAMERAS.prefix));
@@ -911,6 +1197,13 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
     }
 
+    /**
+     * Fetches calendar service status and the next scheduled meeting. Handles both the
+     * {@code status}/{@code Status} field-name variants seen across firmware versions.
+     *
+     * @param props destination map for the fetched {@code Calendar#*} properties
+     * @throws Exception if either underlying device API call fails
+     */
     private void fetchCalendar(Map<String, String> props) throws Exception {
         props.keySet().removeIf(k -> k.startsWith(PropertyGroup.CALENDAR.prefix));
         JsonNode status = doGet(ApiUri.CALENDAR, JsonNode.class);
@@ -941,6 +1234,14 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
     }
 
+    /**
+     * Fetches active collaboration session state. Handles both the
+     * {@code sessionState}/{@code SessionId} and {@code state}/{@code id} field-name variants
+     * seen across firmware versions.
+     *
+     * @param props destination map for the fetched {@code Collaboration#*} properties
+     * @throws Exception if the underlying device API call fails
+     */
     private void fetchCollaboration(Map<String, String> props) throws Exception {
         JsonNode collab = doGet(ApiUri.COLLABORATION, JsonNode.class);
         props.keySet().removeIf(k -> k.startsWith(PropertyGroup.COLLABORATION.prefix));
@@ -964,6 +1265,12 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
     }
 
+    /**
+     * Fetches blast-dial, audio-call, and video-call availability flags.
+     *
+     * @param props destination map for the fetched {@code ConferencingCapabilities#*} properties
+     * @throws Exception if the underlying device API call fails
+     */
     private void fetchConferencingCapabilities(Map<String, String> props) throws Exception {
         JsonNode caps = doGet(ApiUri.CONFERENCING_CAPS, JsonNode.class);
         props.keySet().removeIf(k -> k.startsWith(PropertyGroup.CONFERENCING_CAPABILITIES.prefix));
@@ -975,6 +1282,13 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         props.put(PropertyGroup.CONFERENCING_CAPABILITIES.key("VideoCall"), caps.path("canMakeVideoCall").asBoolean() ? Values.AVAILABLE : Values.UNAVAILABLE);
     }
 
+    /**
+     * Fetches currently active management sessions, replacing any previously reported sessions
+     * with the current list.
+     *
+     * @param props destination map for the fetched {@code ActiveSessions#*} properties
+     * @throws Exception if the underlying device API call fails
+     */
     private void fetchActiveSessions(Map<String, String> props) throws Exception {
         JsonNode response = doGet(ApiUri.SESSIONS_LIST, JsonNode.class);
         props.keySet().removeIf(k -> k.startsWith("ActiveSessions#"));
@@ -1001,6 +1315,15 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
     }
 
+    /**
+     * Fetches the active conference (if any) and its per-call media statistics, and updates
+     * {@link #localEndpointStatistics} accordingly — this is the only method that populates
+     * {@code EndpointStatistics}, so it is never updated while this group is disabled.
+     *
+     * @param props destination map for the fetched {@code Conferences#*} properties; left
+     *              untouched (aside from the prefix flush) when there is no active conference
+     * @throws Exception if any underlying device API call fails
+     */
     private void fetchConferences(Map<String, String> props) throws Exception {
         props.keySet().removeIf(k -> k.startsWith(PropertyGroup.ACTIVE_CONFERENCE.prefix));
 
@@ -1089,6 +1412,15 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         localEndpointStatistics.setContentChannelStats(contentStats);
     }
 
+    /**
+     * Splits a flat list of RX/AUDIO, RX/VIDEO, TX/AUDIO, TX/VIDEO media-stat entries into the
+     * given per-channel stats objects, then derives the combined (audio+video) call-level totals.
+     *
+     * @param mediaStats the raw media-stats entries from the device
+     * @param audio destination for audio channel statistics
+     * @param video destination for video channel statistics
+     * @param call destination for the combined call-level statistics
+     */
     private void processMediaStats(ArrayNode mediaStats, AudioChannelStats audio, VideoChannelStats video, CallStats call) {
         mediaStats.forEach(node -> {
             String direction = getJsonProperty(node, "mediaDirection", String.class);
@@ -1150,6 +1482,14 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         call.setCallRateTx(sumIntegers(audio.getBitRateTx(), video.getBitRateTx()));
     }
 
+    /**
+     * Resolves SIP/H.323 registration status. In device mode, registration is always reported
+     * as true (there is no separate provider/registrar to check); otherwise, the SIP and H.323
+     * gatekeeper endpoints are queried directly, and either being unavailable is tolerated
+     * (logged and left unset rather than failing the whole fetch).
+     *
+     * @return the resolved registration status
+     */
     private RegistrationStatus fetchRegistrationStatus() {
         RegistrationStatus status = new RegistrationStatus();
         if ("1".equals(cachedProperties.get(ControlKey.DEVICE_MODE))) {
@@ -1184,6 +1524,15 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         return status;
     }
 
+    /**
+     * Reads a single field from a JSON node as the requested type, returning null if the field
+     * is missing, null, or an unsupported type.
+     *
+     * @param node the JSON node to read from
+     * @param field the field name to read
+     * @param type the expected type ({@link String}, {@link Integer}, or {@link Float})
+     * @return the field's value as {@code T}, or null if absent or unsupported
+     */
     @SuppressWarnings("unchecked")
     private <T> T getJsonProperty(JsonNode node, String field, Class<T> type) {
         JsonNode child = node.path(field);
@@ -1202,6 +1551,13 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         return null;
     }
 
+    /**
+     * Sums two nullable integers, treating a missing (null) operand as unmeasured rather than zero.
+     *
+     * @param a first value, may be null
+     * @param b second value, may be null
+     * @return the sum, treating a null operand as 0; null if both are null
+     */
     private Integer sumIntegers(Integer a, Integer b) {
         if (a == null && b == null) {
             return null;
@@ -1209,6 +1565,13 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         return (a == null ? 0 : a) + (b == null ? 0 : b);
     }
 
+    /**
+     * Sums two nullable floats, treating a missing (null) operand as unmeasured rather than zero.
+     *
+     * @param a first value, may be null
+     * @param b second value, may be null
+     * @return the sum, treating a null operand as 0; null if both are null
+     */
     private Float sumFloats(Float a, Float b) {
         if (a == null && b == null) {
             return null;
@@ -1216,6 +1579,15 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         return (a == null ? 0f : a) + (b == null ? 0f : b);
     }
 
+    /**
+     * Fetches installed application versions/update timestamps and the list of available
+     * providers, then resolves and reports the active provider — the pending user selection
+     * ({@link #selectedApp}) if one is set, otherwise the most recently updated app.
+     *
+     * @param props destination map for the fetched {@code Applications#*} properties
+     * @param controls destination list for the provider dropdown and, if a selection is pending, the save button
+     * @throws Exception if the underlying device API call fails
+     */
     private void fetchApplications(Map<String, String> props, List<AdvancedControllableProperty> controls)
             throws Exception {
         props.keySet().removeIf(k -> k.startsWith(PropertyGroup.APPLICATIONS.prefix));
@@ -1267,6 +1639,14 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
     }
 
+    /**
+     * Fetches connected peripheral devices (excluding the codec itself) via the undocumented
+     * device-management endpoint, replacing any previously reported peripherals with the
+     * current list. If the endpoint is unavailable, the fetch is skipped with a warning rather
+     * than failing the whole polling cycle.
+     *
+     * @param props destination map for the fetched {@code Peripherals#*} properties
+     */
     private void fetchPeripherals(Map<String, String> props) {
         ArrayNode devices;
         try {
@@ -1309,6 +1689,12 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     // Utilities
     // -------------------------------------------------------------------------
 
+    /**
+     * Reports adapter self-monitoring properties: version, build date, uptime, last monitoring
+     * cycle timestamp, and the currently active property groups.
+     *
+     * @param props destination map for the {@code AdapterMetadata#*} properties
+     */
     private void populateAdapterMetadata(Map<String, String> props) {
         props.put(PropertyGroup.ADAPTER_METADATA.key("AdapterVersion"),
             adapterProperties.getProperty("adapter.version", Values.N_A));
@@ -1321,22 +1707,47 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         props.put(PropertyGroup.ADAPTER_METADATA.key("ActivePropertyGroups"), String.join(", ", displayPropertyGroups));
     }
 
+    /**
+     * Checks whether a property group is currently enabled for collection.
+     *
+     * @param groupName the property group name to check
+     * @return true if {@code groupName} (or {@code "All"}) is in {@link #displayPropertyGroups}
+     */
     private boolean isGroupEnabled(String groupName) {
         return displayPropertyGroups.contains("All") || displayPropertyGroups.contains(groupName);
     }
 
+    /**
+     * Determines whether the cached snapshot is still fresh enough to return without polling the device.
+     *
+     * @return true if the last poll is still within the polling interval, or a control was
+     *         applied within the last {@link #CONTROL_COOLDOWN_MS} — in either case the cache
+     *         is returned as-is instead of triggering a new device fetch
+     */
     private boolean shouldReturnCache() {
         long now = System.currentTimeMillis();
         return (now - lastPollTimestamp) < pollingIntervalMs
             || (now - lastControlTimestamp) < CONTROL_COOLDOWN_MS;
     }
 
+    /**
+     * Refreshes {@link #pollingIntervalMs} from the platform-configured monitoring rate.
+     * Silently keeps the previous interval if the platform framework in use predates
+     * {@code getMonitoringRate()}.
+     */
     private void updatePollingInterval() {
         try {
             pollingIntervalMs = getMonitoringRate() * 60_000;
         } catch (NoSuchMethodError ignored) {}
     }
 
+    /**
+     * Updates a cached property's value and, if a matching control exists, its value too —
+     * used to optimistically reflect a control change without waiting for the next poll.
+     *
+     * @param name the property/control name to update
+     * @param value the new value
+     */
     private void updateCachedControl(String name, String value) {
         cachedProperties.put(name, value);
         cachedControls.stream()
@@ -1345,6 +1756,12 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             .ifPresent(c -> c.setValue(value));
     }
 
+    /**
+     * Adds a control to the list, replacing any existing control with the same name.
+     *
+     * @param controls the list to update
+     * @param control the control to add; a no-op if null
+     */
     private void addOrReplace(List<AdvancedControllableProperty> controls, AdvancedControllableProperty control) {
         if (control == null) {
             return;
@@ -1355,6 +1772,13 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
     }
 
+    /**
+     * Collapses a list of controls down to one per name, keeping whichever has the newer
+     * timestamp (or the existing one if the incoming entry has no timestamp).
+     *
+     * @param controls the controls to deduplicate
+     * @return one control per distinct name, in first-seen order
+     */
     private List<AdvancedControllableProperty> deduplicateControls(List<AdvancedControllableProperty> controls) {
         LinkedHashMap<String, AdvancedControllableProperty> latest = new LinkedHashMap<>();
         for (AdvancedControllableProperty c : controls) {
@@ -1371,6 +1795,13 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         return new ArrayList<>(latest.values());
     }
 
+    /**
+     * Puts a JSON node's text value into the map, skipping null, empty, and literal-"null" values.
+     *
+     * @param props destination map
+     * @param key the property key
+     * @param node the JSON node to read the value from
+     */
     private void putText(Map<String, String> props, String key, JsonNode node) {
         if (node == null || node.isNull()) {
             return;
@@ -1385,6 +1816,10 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * Inserts a peripheral property. When the same key already exists (two devices share
      * category/type/connection), ordinal suffixes (:1, :2, …) are appended to the group
      * segment so all values remain visible.
+     *
+     * @param props destination map
+     * @param key the property key, in {@code Peripherals#[CATEGORY:TYPE:CONNECTION]Field} form
+     * @param value the value to insert; a no-op if null or empty
      */
     private void putPeripheral(Map<String, String> props, String key, String value) {
         if (value == null || value.isEmpty()) {
@@ -1408,6 +1843,13 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         props.put(baseGroup + ":" + ordinal + "#" + namePart, value);
     }
 
+    /**
+     * Converts a lowercase, space/underscore-separated string to PascalCase, uppercasing the
+     * {@code sip}, {@code h323}, and {@code p2p} acronyms instead of just capitalizing them.
+     *
+     * @param input the string to convert
+     * @return the PascalCase result, or the input unchanged if null or empty
+     */
     private String toPascalCase(String input) {
         if (input == null || input.isEmpty()) {
             return input;
@@ -1426,6 +1868,13 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         return sb.toString();
     }
 
+    /**
+     * Formats a device-reported uptime string (given as a floating-point number of seconds)
+     * into a human-readable duration.
+     *
+     * @param uptimeStr the raw uptime value as reported by the device
+     * @return the formatted duration, or {@code uptimeStr} unchanged if it isn't a valid number
+     */
     private String formatUptime(String uptimeStr) {
         try {
             return formatUptimeSeconds(Math.round(Float.parseFloat(uptimeStr)));
@@ -1434,6 +1883,13 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         }
     }
 
+    /**
+     * Formats a duration in seconds as {@code "<d> d <h> hr <m> min <s> sec"}, omitting any
+     * unit that is zero.
+     *
+     * @param s the duration in seconds
+     * @return the formatted duration
+     */
     private String formatUptimeSeconds(long s) {
         long d = s / 86400, h = s % 86400 / 3600, m = s % 3600 / 60, sec = s % 60;
         StringBuilder sb = new StringBuilder();
@@ -1452,10 +1908,22 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         return sb.toString().trim();
     }
 
+    /**
+     * Formats a Unix timestamp given in seconds as a human-readable date/time.
+     *
+     * @param epochSeconds a Unix timestamp in seconds
+     * @return the timestamp formatted as {@code yyyy-MM-dd HH:mm} in the local system time zone
+     */
     private String formatEpochSeconds(long epochSeconds) {
         return Instant.ofEpochSecond(epochSeconds).atZone(ZoneId.systemDefault()).format(DATE_FMT);
     }
 
+    /**
+     * Formats a Unix timestamp given in milliseconds as a human-readable date/time.
+     *
+     * @param epochMillis a Unix timestamp in milliseconds
+     * @return the timestamp formatted as {@code yyyy-MM-dd HH:mm} in the local system time zone
+     */
     private String formatEpochMillis(long epochMillis) {
         return Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()).format(DATE_FMT);
     }
@@ -1464,12 +1932,44 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     // Configurable properties
     // -------------------------------------------------------------------------
 
+    /**
+     * Returns the interval between device polling cycles.
+     *
+     * @return the current polling interval in milliseconds
+     */
     public int  getApiPollingInterval()       { return pollingIntervalMs; }
+    /**
+     * Sets the interval between device polling cycles.
+     *
+     * @param ms the polling interval in milliseconds
+     */
     public void setApiPollingInterval(int ms) { this.pollingIntervalMs = ms; }
 
+    /**
+     * Returns the default call bandwidth used when dialing without an explicit rate.
+     *
+     * @return the default call bandwidth in kbps used when dialing without an explicit rate
+     */
     public int  getDefaultCallRate()          { return defaultCallRate; }
+    /**
+     * Sets the default call bandwidth used when dialing without an explicit rate.
+     *
+     * @param kbps the default call bandwidth in kbps
+     */
     public void setDefaultCallRate(int kbps)  { this.defaultCallRate = kbps; }
 
+    /**
+     * Returns how long an unsaved application-provider selection is kept before it reverts
+     * (see {@link #resetProviderSelectionIfExpired}).
+     *
+     * @return minutes an unsaved application-provider selection is kept before reverting
+     */
     public int  getAppProviderSelectionTimeoutMin()        { return appProviderSelectionTimeoutMin; }
+    /**
+     * Sets how long an unsaved application-provider selection is kept before it reverts
+     * (see {@link #resetProviderSelectionIfExpired}).
+     *
+     * @param min minutes an unsaved application-provider selection is kept before reverting
+     */
     public void setAppProviderSelectionTimeoutMin(int min) { this.appProviderSelectionTimeoutMin = min; }
 }
