@@ -169,6 +169,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private volatile boolean authFailed;
     private volatile String  selectedApp;   // written by controlProperty, read by fetchApplications
 
+    private long providerSelectionTimestamp;
+    private int  appProviderSelectionTimeoutMin = 5;
+
     private final Map<String, String>                cachedProperties = new ConcurrentHashMap<>();
     private final List<AdvancedControllableProperty> cachedControls   = new ArrayList<>();
 
@@ -282,12 +285,9 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     private static final Map<String, List<String>> PROPERTY_GROUP_PRESETS;
     static {
         Map<String, List<String>> m = new LinkedHashMap<>();
-        m.put("Full",          Collections.singletonList("All"));
-        m.put("System",        Arrays.asList("SystemStatus", "System", "LANStatus"));
-        m.put("Audio",         Arrays.asList("SystemStatus", "System", "Audio", "Microphone"));
-        m.put("Collaboration", Arrays.asList("SystemStatus", "System", "Calendar", "Collaboration", "ConferencingCapabilities", "ActiveSessions"));
-        m.put("Applications",  Arrays.asList("System", "Applications"));
-        m.put("Peripherals",   Arrays.asList("System", "Peripherals"));
+        m.put("Default",    Collections.singletonList("All"));
+        m.put("AppMode",    Arrays.asList("ActiveSessions", "Applications", "Audio", "Collaboration", "Microphone", "System", "SystemStatus"));
+        m.put("DeviceMode", Arrays.asList("ActiveSessions", "Applications", "Audio", "Microphone", "Peripherals", "System", "SystemStatus", "Conferences"));
         PROPERTY_GROUP_PRESETS = Collections.unmodifiableMap(m);
     }
 
@@ -295,6 +295,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         this.displayPropertyGroups = Arrays.stream(value.split(","))
             .map(String::trim)
             .filter(s -> !s.isEmpty())
+            .sorted()
             .collect(Collectors.toList());
     }
 
@@ -304,7 +305,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             logger.warn("Unknown displayPropertyGroupsPreset '" + preset + "'. Valid values: " + PROPERTY_GROUP_PRESETS.keySet());
             return;
         }
-        this.displayPropertyGroups = new ArrayList<>(groups);
+        this.displayPropertyGroups = groups.stream().sorted().collect(Collectors.toList());
     }
 
     // -------------------------------------------------------------------------
@@ -324,17 +325,32 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             ensureAuthenticated();
             refreshInProgress        = true;
             controlTimestampSnapshot = lastControlTimestamp;
+            resetProviderSelectionIfExpired();
         } finally {
             stateLock.unlock();
         }
 
         try {
             ConcurrentHashMap<String, String> fresh = new ConcurrentHashMap<>();
-            List<AdvancedControllableProperty> freshControls = Collections.synchronizedList(new ArrayList<AdvancedControllableProperty>());
+            List<AdvancedControllableProperty> freshControls = Collections.synchronizedList(new ArrayList<>());
             runAllGroups(fresh, freshControls);
 
             stateLock.lock();
             try {
+                // Flush stale entries from variable-size groups before merging.
+                // putAll() is additive and won't remove keys for items the device no longer
+                // reports (e.g. uninstalled apps, ended sessions, disconnected peripherals).
+//                if (isGroupEnabled("Microphone"))     cachedProperties.keySet().removeIf(k -> k.startsWith(PropertyGroup.MICROPHONE.baseName));
+//                if (isGroupEnabled("Camera"))         cachedProperties.keySet().removeIf(k -> k.startsWith(PropertyGroup.CAMERA.baseName) || k.startsWith(PropertyGroup.CAMERAS.prefix));
+//                if (isGroupEnabled("ActiveSessions")) cachedProperties.keySet().removeIf(k -> k.startsWith(PropertyGroup.ACTIVE_SESSIONS.prefix));
+//                if (isGroupEnabled("Conferences"))    cachedProperties.keySet().removeIf(k -> k.startsWith(PropertyGroup.ACTIVE_CONFERENCE.prefix));
+                // Only clear the previous Applications entries once fresh data for the group is
+                // actually present this cycle — otherwise a failed fetch would wipe the group
+                // from the cache instead of leaving the previous (stale but valid) values in place.
+                if (isGroupEnabled("Applications") && fresh.keySet().stream().anyMatch(k -> k.startsWith(PropertyGroup.APPLICATIONS.prefix)))
+                    cachedProperties.keySet().removeIf(k -> k.startsWith(PropertyGroup.APPLICATIONS.prefix));
+//                if (isGroupEnabled("Peripherals"))    cachedProperties.keySet().removeIf(k -> k.startsWith(PropertyGroup.PERIPHERALS.baseName));
+
                 cachedProperties.putAll(fresh);
                 // Only replace the controls list when no control arrived during this fetch.
                 // If a control was sent mid-poll, the optimistic cache update takes precedence
@@ -528,12 +544,14 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                     break;
                 case ControlKey.APP_PROVIDER:
                     selectedApp = value;
+                    providerSelectionTimestamp = System.currentTimeMillis();
                     cachedProperties.put(ControlKey.APP_SAVE, Values.N_A);
                     addOrReplace(cachedControls, createButton(ControlKey.APP_SAVE, "Save", "Saving", 180_000L));
                     updateCachedControl(property, value);
                     break;
                 case ControlKey.APP_SAVE:
                     selectedApp = null;
+                    providerSelectionTimestamp = 0;
                     cachedProperties.remove(ControlKey.APP_SAVE);
                     cachedControls.removeIf(c -> ControlKey.APP_SAVE.equals(c.getName()));
                     break;
@@ -711,6 +729,20 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             return h323;
         }
         return name != null ? name : "";
+    }
+
+    // Must be called under stateLock.
+    private void resetProviderSelectionIfExpired() {
+        if (selectedApp == null || providerSelectionTimestamp == 0) {
+            return;
+        }
+        long elapsedMs = System.currentTimeMillis() - providerSelectionTimestamp;
+        if (elapsedMs >= (long) appProviderSelectionTimeoutMin * 60_000L) {
+            selectedApp = null;
+            providerSelectionTimestamp = 0;
+            cachedProperties.remove(ControlKey.APP_SAVE);
+            cachedControls.removeIf(c -> ControlKey.APP_SAVE.equals(c.getName()));
+        }
     }
 
     private static int parseIntOrZero(String s) {
@@ -926,7 +958,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                           : collab.hasNonNull("id")        ? collab.get("id").asText()
                           : null;
                 if (id != null) {
-                    props.put(PropertyGroup.COLLABORATION.key("SessionId"), id);
+                    props.put(PropertyGroup.COLLABORATION.key("SessionID"), id);
                 }
             }
         }
@@ -956,7 +988,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         int i = 1;
         for (JsonNode session : list) {
             String base = "ActiveSessions#Session" + i;
-            putText(props, base + "UserId",     session.get("userId"));
+            putText(props, base + "UserID",     session.get("userId"));
             putText(props, base + "Role",       session.get("role"));
             putText(props, base + "Location",   session.get("location"));
             putText(props, base + "ClientType", session.get("clientType"));
@@ -992,7 +1024,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             return;
         }
 
-        props.put(PropertyGroup.ACTIVE_CONFERENCE.key("ConferenceId"), String.valueOf(conferenceId));
+        props.put(PropertyGroup.ACTIVE_CONFERENCE.key("ConferenceID"), String.valueOf(conferenceId));
         JsonNode startTime = conference.get("startTime");
         if (startTime != null && !startTime.isNull()) {
             props.put(PropertyGroup.ACTIVE_CONFERENCE.key("ConferenceStartTime"), formatEpochMillis(startTime.asLong()));
@@ -1406,16 +1438,16 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         long d = s / 86400, h = s % 86400 / 3600, m = s % 3600 / 60, sec = s % 60;
         StringBuilder sb = new StringBuilder();
         if (d > 0) {
-            sb.append(d).append("d ");
+            sb.append(d).append(" d ");
         }
         if (h > 0) {
-            sb.append(h).append("hr ");
+            sb.append(h).append(" hr ");
         }
         if (m > 0) {
-            sb.append(m).append("min ");
+            sb.append(m).append(" min ");
         }
         if (sec > 0) {
-            sb.append(sec).append("sec");
+            sb.append(sec).append(" sec");
         }
         return sb.toString().trim();
     }
@@ -1437,4 +1469,7 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
 
     public int  getDefaultCallRate()          { return defaultCallRate; }
     public void setDefaultCallRate(int kbps)  { this.defaultCallRate = kbps; }
+
+    public int  getAppProviderSelectionTimeoutMin()        { return appProviderSelectionTimeoutMin; }
+    public void setAppProviderSelectionTimeoutMin(int min) { this.appProviderSelectionTimeoutMin = min; }
 }

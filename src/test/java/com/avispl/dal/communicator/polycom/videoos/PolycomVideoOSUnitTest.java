@@ -15,6 +15,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -222,6 +223,83 @@ class PolycomVideoOSUnitTest {
         assertEquals("1", stats().get(ControlKey.DEVICE_MODE));
     }
 
+    @Test
+    void controlProperty_appProviderSelection_resetsAfterTimeout() throws Exception {
+        adapter.getMultipleStatistics();
+
+        // Select a provider — APP_SAVE appears immediately via optimistic cache update
+        ControllableProperty cp = new ControllableProperty();
+        cp.setProperty(ControlKey.APP_PROVIDER);
+        cp.setValue("Zoom");
+        adapter.controlProperty(cp);
+
+        assertNotNull(findControl(ControlKey.APP_SAVE),
+            "APP_SAVE button must appear after provider selection");
+        assertEquals("Zoom", stats().get(ControlKey.APP_PROVIDER));
+
+        // Timeout = 0 means any elapsed time qualifies as expired
+        adapter.setAppProviderSelectionTimeoutMin(0);
+
+        // Force a full refresh: zero both timestamps so shouldReturnCache() returns false.
+        // lastControlTimestamp must also be zeroed because setApiPollingInterval() is overridden
+        // by updatePollingInterval() at the top of getMultipleStatistics(), so we bypass the
+        // polling-interval check via lastPollTimestamp instead.
+        Field lastControlTs = PolycomVideoOS.class.getDeclaredField("lastControlTimestamp");
+        lastControlTs.setAccessible(true);
+        lastControlTs.set(adapter, 0L);
+
+        Field lastPollTs = PolycomVideoOS.class.getDeclaredField("lastPollTimestamp");
+        lastPollTs.setAccessible(true);
+        lastPollTs.set(adapter, 0L);
+
+        // Full refresh — resetProviderSelectionIfExpired() fires, then fetchApplications re-polls device
+        ExtendedStatistics es = (ExtendedStatistics) adapter.getMultipleStatistics().get(0);
+        Map<String, String> props    = es.getStatistics();
+        List<AdvancedControllableProperty> controls = es.getControllableProperties();
+
+        assertFalse(props.containsKey(ControlKey.APP_SAVE),
+            "APP_SAVE must be absent from statistics after expiry");
+        assertTrue(controls.stream().noneMatch(c -> ControlKey.APP_SAVE.equals(c.getName())),
+            "APP_SAVE control must be removed after expiry");
+        // Microsoft Teams has the highest lastUpdatedOn in stubs — it becomes latestApp
+        assertEquals("Microsoft Teams", props.get(ControlKey.APP_PROVIDER),
+            "APP_PROVIDER must revert to device-reported value after expiry");
+    }
+
+    @Test
+    void formatUptimeSeconds_allUnits_spaceBetweenNumberAndUnit() throws Exception {
+        setInitTimestamp((1 * 86400L + 2 * 3600L + 30 * 60L + 5) * 1000);
+        assertEquals("1 d 2 hr 30 min 5 sec", stats().get(PropertyGroup.ADAPTER_METADATA.key("AdapterUptime")));
+    }
+
+    @Test
+    void formatUptimeSeconds_minutesAndSeconds_spaceBetweenNumberAndUnit() throws Exception {
+        setInitTimestamp((45 * 60L + 3) * 1000);
+        assertEquals("45 min 3 sec", stats().get(PropertyGroup.ADAPTER_METADATA.key("AdapterUptime")));
+    }
+
+    @Test
+    void formatUptimeSeconds_secondsOnly_spaceBetweenNumberAndUnit() throws Exception {
+        setInitTimestamp(42_000);
+        assertEquals("42 sec", stats().get(PropertyGroup.ADAPTER_METADATA.key("AdapterUptime")));
+    }
+
+    @Test
+    void setDisplayPropertyGroups_unsortedInput_activePropertyGroupsIsAlphabetical() throws Exception {
+        adapter.setDisplayPropertyGroups("System, Audio, Cameras");
+        Map<String, String> props = stats();
+        assertEquals("Audio, Cameras, System",
+            props.get(PropertyGroup.ADAPTER_METADATA.key("ActivePropertyGroups")));
+    }
+
+    @Test
+    void setDisplayPropertyGroupsPreset_multipleGroups_activePropertyGroupsIsAlphabetical() throws Exception {
+        adapter.setDisplayPropertyGroupsPreset("DeviceMode");
+        Map<String, String> props = stats();
+        assertEquals("ActiveSessions, Applications, Audio, Microphone, Peripherals, System, SystemStatus",
+            props.get(PropertyGroup.ADAPTER_METADATA.key("ActivePropertyGroups")));
+    }
+
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
@@ -242,5 +320,11 @@ class PolycomVideoOSUnitTest {
         return extStats().getControllableProperties().stream()
             .filter(c -> name.equals(c.getName()))
             .findFirst().orElse(null);
+    }
+
+    private void setInitTimestamp(long elapsedMs) throws Exception {
+        Field f = PolycomVideoOS.class.getDeclaredField("initTimestamp");
+        f.setAccessible(true);
+        f.set(adapter, System.currentTimeMillis() - elapsedMs);
     }
 }
