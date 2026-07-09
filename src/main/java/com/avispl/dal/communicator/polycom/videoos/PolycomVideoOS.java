@@ -475,6 +475,16 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                         addOrReplace(cachedControls, c);
                     }
                 }
+                // The AudioVolume slider is only relevant in native/Device Mode, where the
+                // codec's own volume is the only way to adjust it. Once an application
+                // provider is active (App Mode), the provider manages its own volume, so the
+                // control is hidden — merge/addOrReplace only ever adds or updates, so it must
+                // be removed explicitly here rather than simply skipped during the fetch.
+                String deviceMode = cachedProperties.get(ControlKey.DEVICE_MODE);
+                boolean nativeDeviceMode = "true".equalsIgnoreCase(deviceMode);
+                if (!nativeDeviceMode) {
+                    cachedControls.removeIf(c -> ControlKey.VOLUME.equals(c.getName()));
+                }
                 cachedProperties.put(ControlKey.REBOOT, Values.N_A);
                 addOrReplace(cachedControls, createButton(ControlKey.REBOOT, "Reboot", "Rebooting...", REBOOT_GRACE_MS));
                 populateAdapterMetadata(cachedProperties);
