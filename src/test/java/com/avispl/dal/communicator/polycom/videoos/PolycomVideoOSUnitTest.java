@@ -20,6 +20,9 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.get;
+import static com.github.tomakehurst.wiremock.client.WireMock.okJson;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.options;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -105,6 +108,7 @@ class PolycomVideoOSUnitTest {
 
     @Test
     void getMultipleStatistics_allExpectedControlsPresent() throws Exception {
+        stubNativeDeviceMode();
         List<String> controlNames = extStats().getControllableProperties().stream()
             .map(AdvancedControllableProperty::getName)
             .collect(java.util.stream.Collectors.toList());
@@ -149,6 +153,7 @@ class PolycomVideoOSUnitTest {
 
     @Test
     void getMultipleStatistics_volumeIsSliderWithCorrectRange() throws Exception {
+        stubNativeDeviceMode();
         AdvancedControllableProperty volume = findControl(ControlKey.VOLUME);
         assertNotNull(volume, "Volume control must be present");
         assertTrue(volume.getType() instanceof AdvancedControllableProperty.Slider,
@@ -326,5 +331,16 @@ class PolycomVideoOSUnitTest {
         Field f = PolycomVideoOS.class.getDeclaredField("initTimestamp");
         f.setAccessible(true);
         f.set(adapter, System.currentTimeMillis() - elapsedMs);
+    }
+
+    /**
+     * The Volume control is only exposed in native Device Mode (see PolycomVideoOS,
+     * the {@code cachedControls.removeIf(... VOLUME ...)} guard); the shared stub
+     * defaults device mode to {@code false} (App Mode), so tests that need Volume
+     * present must override it to {@code true} first.
+     */
+    private void stubNativeDeviceMode() {
+        wireMock.stubFor(get(urlEqualTo("/rest/system/mode/device"))
+            .willReturn(okJson("{\"result\":true}")));
     }
 }

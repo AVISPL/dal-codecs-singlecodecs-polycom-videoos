@@ -384,14 +384,17 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * Sets which property groups are collected and reported, from a comma-separated list
      * (e.g. {@code "Audio,Camera,System"}, or {@code "All"} for every group).
      *
-     * @param value comma-separated group names; surrounding whitespace is trimmed and empty entries are ignored
+     * @param value comma-separated group names; surrounding whitespace is trimmed and empty or
+     *              unsupported entries are ignored. If nothing valid remains, falls back to {@code "All"}.
      */
     public void setDisplayPropertyGroups(String value) {
-        this.displayPropertyGroups = Arrays.stream(value.split(","))
+        List<String> groups = value == null ? Collections.emptyList() : Arrays.stream(value.split(","))
             .map(String::trim)
             .filter(s -> !s.isEmpty())
+            .filter(s -> s.equals("All") || Arrays.stream(PropertyGroup.values()).anyMatch(g -> g.baseName.equals(s)))
             .sorted()
             .collect(Collectors.toList());
+        this.displayPropertyGroups = groups.isEmpty() ? new ArrayList<>(Collections.singletonList("All")) : groups;
     }
 
     /**
@@ -461,7 +464,8 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
                 // from the cache instead of leaving the previous (stale but valid) values in place.
                 if (isGroupEnabled("Applications") && fresh.keySet().stream().anyMatch(k -> k.startsWith(PropertyGroup.APPLICATIONS.prefix)))
                     cachedProperties.keySet().removeIf(k -> k.startsWith(PropertyGroup.APPLICATIONS.prefix));
-//                if (isGroupEnabled("Peripherals"))    cachedProperties.keySet().removeIf(k -> k.startsWith(PropertyGroup.PERIPHERALS.baseName));
+                if (isGroupEnabled("Peripherals") && fresh.keySet().stream().anyMatch(k -> k.startsWith(PropertyGroup.PERIPHERALS.baseName)))
+                    cachedProperties.keySet().removeIf(k -> k.startsWith(PropertyGroup.PERIPHERALS.baseName));
 
                 cachedProperties.putAll(fresh);
                 // Only replace the controls list when no control arrived during this fetch.
@@ -1655,6 +1659,12 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
      * current list. If the endpoint is unavailable, the fetch is skipped with a warning rather
      * than failing the whole polling cycle.
      *
+     * <p>Peripherals are grouped by {@code category:type:connectionType} (there's no other
+     * natural identifier shared across all device kinds). When two or more devices share a
+     * group, each gets a stable {@code :1}, {@code :2}, ... suffix assigned by its position in
+     * the API response for this poll cycle; a group with exactly one device keeps the bare,
+     * unsuffixed prefix.
+     *
      * @param props destination map for the fetched {@code Peripherals#*} properties
      */
     private void fetchPeripherals(Map<String, String> props) {
@@ -1670,15 +1680,29 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
         if (devices == null) return;
 
         String ownName = props.get(PropertyGroup.SYSTEM.key("SystemName"));
+        List<JsonNode> peripherals = new ArrayList<>();
         devices.forEach(device -> {
             String uid        = device.path("uid").asText(null);
             String deviceName = device.path("systemName").asText(null);
-            if (uid == null || uid.isEmpty() || (ownName != null && ownName.equals(deviceName))) return;
+            if (uid != null && !uid.isEmpty() && !(ownName != null && ownName.equals(deviceName))) {
+                peripherals.add(device);
+            }
+        });
 
+        Map<String, Long> countsByGroupKey = peripherals.stream()
+            .collect(Collectors.groupingBy(this::peripheralGroupKey, Collectors.counting()));
+        Map<String, Integer> ordinals = new HashMap<>();
+
+        for (JsonNode device : peripherals) {
+            String groupKey = peripheralGroupKey(device);
+            String conn     = device.path("connectionType").asText("UNKNOWN").toUpperCase();
             String category = device.path("deviceCategory").asText("UNKNOWN").toUpperCase();
             String type     = device.path("deviceType").asText("UNKNOWN").toUpperCase();
-            String conn     = device.path("connectionType").asText("UNKNOWN").toUpperCase();
-            String prefix   = PropertyGroup.PERIPHERALS.indexedPrefix(String.format("[%s:%s:%s]", category, type, conn));
+
+            String base   = "[" + groupKey + "]";
+            String prefix = countsByGroupKey.get(groupKey) > 1
+                ? PropertyGroup.PERIPHERALS.indexedPrefix(base + ":" + ordinals.merge(groupKey, 1, Integer::sum))
+                : PropertyGroup.PERIPHERALS.indexedPrefix(base);
 
             putPeripheral(props, prefix + "ConnectionType",   conn);
             putPeripheral(props, prefix + "DeviceCategory",  category);
@@ -1691,8 +1715,22 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
             putPeripheral(props, prefix + "SerialNumber",    device.path("serialNumber").asText(null));
             putPeripheral(props, prefix + "SoftwareVersion", device.path("softwareVersion").asText(null));
             putPeripheral(props, prefix + "SystemName",      device.path("systemName").asText(null));
-            putPeripheral(props, prefix + "UID",             uid);
-        });
+            putPeripheral(props, prefix + "UID",             device.path("uid").asText(null));
+        }
+    }
+
+    /**
+     * Builds the {@code category:type:connectionType} key used to detect peripherals that
+     * would otherwise collide on the same {@link PropertyGroup#PERIPHERALS} prefix.
+     *
+     * @param device a single entry from the peripheral-devices API response
+     * @return the upper-cased {@code category:type:connectionType} grouping key
+     */
+    private String peripheralGroupKey(JsonNode device) {
+        String category = device.path("deviceCategory").asText("UNKNOWN").toUpperCase();
+        String type      = device.path("deviceType").asText("UNKNOWN").toUpperCase();
+        String conn      = device.path("connectionType").asText("UNKNOWN").toUpperCase();
+        return category + ":" + type + ":" + conn;
     }
 
     // -------------------------------------------------------------------------
@@ -1823,34 +1861,18 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
     }
 
     /**
-     * Inserts a peripheral property. When the same key already exists (two devices share
-     * category/type/connection), ordinal suffixes (:1, :2, …) are appended to the group
-     * segment so all values remain visible.
+     * Inserts a peripheral property. The key is already disambiguated by the caller
+     * ({@link #fetchPeripherals}), so this is a plain null/empty-guarded put.
      *
      * @param props destination map
-     * @param key the property key, in {@code Peripherals#[CATEGORY:TYPE:CONNECTION]Field} form
+     * @param key the property key, in {@code Peripherals#[CATEGORY:TYPE:CONNECTION](:N)#Field} form
      * @param value the value to insert; a no-op if null or empty
      */
     private void putPeripheral(Map<String, String> props, String key, String value) {
         if (value == null || value.isEmpty()) {
             return;
         }
-        if (!props.containsKey(key)) {
-            props.put(key, value);
-            return;
-        }
-        String[] parts     = key.split("#", 2);
-        String   groupPart = parts[0];
-        String   namePart  = parts.length > 1 ? parts[1] : "";
-        String   baseGroup = groupPart.replaceAll(":\\d+$", "");
-
-        if (!groupPart.matches(".*:\\d+$")) {
-            String existing = props.remove(key);
-            props.put(baseGroup + ":1#" + namePart, existing);
-        }
-        int ordinal = 2;
-        while (props.containsKey(baseGroup + ":" + ordinal + "#" + namePart)) ordinal++;
-        props.put(baseGroup + ":" + ordinal + "#" + namePart, value);
+        props.put(key, value);
     }
 
     /**
