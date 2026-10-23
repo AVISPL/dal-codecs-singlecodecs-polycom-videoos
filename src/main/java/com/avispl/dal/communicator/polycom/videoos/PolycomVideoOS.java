@@ -187,10 +187,13 @@ public class PolycomVideoOS extends RestCommunicator implements CallController, 
          * @param response the HTTP response to inspect
          */
         private void captureXsrfToken(ClientHttpResponse response) {
-            List<String> cookies = response.getHeaders().get("set-cookie");
-            if (cookies == null) {
-                return;
-            }
+            // headerSet() instead of get(): HttpHeaders.get has different signatures in Spring 6 and 7
+            List<String> cookies = new ArrayList<>();
+            response.getHeaders().headerSet().forEach(header -> {
+                if (header.getKey().equalsIgnoreCase("set-cookie")) {
+                    cookies.addAll(header.getValue());
+                }
+            });
             for (String cookie : cookies) {
                 if (cookie.startsWith("XSRF-TOKEN")) {
                     int eq   = cookie.indexOf('=');
